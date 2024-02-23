@@ -23,7 +23,7 @@
 
 
 /**
- *	\file include/cartesian_adaptive_compliance_controller/qpOASES/Bounds.hpp
+ *	\file include/qpOASES/Bounds.hpp
  *	\author Hans Joachim Ferreau, Andreas Potschka, Christian Kirches
  *	\version 3.2
  *	\date 2007-2017
@@ -37,7 +37,7 @@
 #define QPOASES_BOUNDS_HPP
 
 
-#include <cartesian_adaptive_compliance_controller/qpOASES/SubjectTo.hpp>
+#include <qpOASES/SubjectTo.hpp>
 
 
 BEGIN_NAMESPACE_QPOASES
@@ -246,7 +246,7 @@ class Bounds : public SubjectTo
 
 END_NAMESPACE_QPOASES
 
-#include <cartesian_adaptive_compliance_controller/qpOASES/Bounds.ipp>
+#include <qpOASES/Bounds.ipp>
 
 #endif	/* QPOASES_BOUNDS_HPP */
 

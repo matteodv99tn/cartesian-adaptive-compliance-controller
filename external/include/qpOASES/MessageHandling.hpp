@@ -23,7 +23,7 @@
 
 
 /**
- *	\file include/cartesian_adaptive_compliance_controller/qpOASES/MessageHandling.hpp
+ *	\file include/qpOASES/MessageHandling.hpp
  *	\author Hans Joachim Ferreau, Andreas Potschka, Christian Kirches (thanks to Leonard Wirsching)
  *	\version 3.2
  *	\date 2007-2017
@@ -43,7 +43,7 @@
 #include <assert.h>
 #endif
 
-#include <cartesian_adaptive_compliance_controller/qpOASES/Constants.hpp>
+#include <qpOASES/Constants.hpp>
 
 
 BEGIN_NAMESPACE_QPOASES
@@ -470,7 +470,7 @@ MessageHandling* getGlobalMessageHandler( );
 
 END_NAMESPACE_QPOASES
 
-#include <cartesian_adaptive_compliance_controller/qpOASES/MessageHandling.ipp>
+#include <qpOASES/MessageHandling.ipp>
 
 #endif /* QPOASES_MESSAGEHANDLING_HPP */
 

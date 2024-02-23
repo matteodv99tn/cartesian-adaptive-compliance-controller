@@ -23,7 +23,7 @@
 
 
 /**
- *	\file include/cartesian_adaptive_compliance_controller/qpOASES/LapackBlasReplacement.hpp
+ *	\file include/qpOASES/LapackBlasReplacement.hpp
  *	\author Andreas Potschka, Hans Joachim Ferreau, Christian Kirches
  *	\version 3.2
  *	\date 2009-2017

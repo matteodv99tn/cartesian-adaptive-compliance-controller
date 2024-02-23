@@ -23,7 +23,7 @@
 
 
 /**
- *	\file include/cartesian_adaptive_compliance_controller/qpOASES/Flipper.hpp
+ *	\file include/qpOASES/Flipper.hpp
  *	\author Hans Joachim Ferreau, Andreas Potschka, Christian Kirches
  *	\version 3.2
  *	\date 2007-2017
@@ -37,14 +37,14 @@
 #define QPOASES_FLIPPER_HPP
 
 
-#include <cartesian_adaptive_compliance_controller/qpOASES/Bounds.hpp>
-#include <cartesian_adaptive_compliance_controller/qpOASES/Constraints.hpp>
+#include <qpOASES/Bounds.hpp>
+#include <qpOASES/Constraints.hpp>
 
 
 BEGIN_NAMESPACE_QPOASES
 
 
-/** 
+/**
  *	\brief Auxiliary class for storing a copy of the current matrix factorisations.
  *
  *	This auxiliary class stores a copy of the current matrix factorisations. It
@@ -117,7 +117,7 @@ class Flipper
 		/** Frees all allocated memory.
 		 *  \return SUCCESSFUL_RETURN */
 		returnValue clear( );
-		
+
 		/** Copies all members from given rhs object.
 		 *  \return SUCCESSFUL_RETURN */
 		returnValue copy(	const Flipper& rhs	/**< Rhs object. */

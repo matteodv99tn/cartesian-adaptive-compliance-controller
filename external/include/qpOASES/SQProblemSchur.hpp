@@ -23,7 +23,7 @@
 
 
 /**
- *	\file include/cartesian_adaptive_compliance_controller/qpOASES/SQProblemSchur.hpp
+ *	\file include/qpOASES/SQProblemSchur.hpp
  *	\author Andreas Waechter and Dennis Janka, based on QProblem.hpp by Hans Joachim Ferreau, Andreas Potschka, Christian Kirches
  *	\version 3.2
  *	\date 2012-2017
@@ -39,9 +39,9 @@
 #define QPOASES_SQPROBLEMSCHUR_HPP
 
 
-#include <cartesian_adaptive_compliance_controller/qpOASES/SQProblem.hpp>
-#include <cartesian_adaptive_compliance_controller/qpOASES/SparseSolver.hpp>
-#include <cartesian_adaptive_compliance_controller/qpOASES/LapackBlasReplacement.hpp>
+#include <qpOASES/SQProblem.hpp>
+#include <qpOASES/SparseSolver.hpp>
+#include <qpOASES/LapackBlasReplacement.hpp>
 
 
 BEGIN_NAMESPACE_QPOASES
@@ -416,7 +416,7 @@ class SQProblemSchur : public SQProblem
 
 END_NAMESPACE_QPOASES
 
-#include <cartesian_adaptive_compliance_controller/qpOASES/SQProblemSchur.ipp>
+#include <qpOASES/SQProblemSchur.ipp>
 
 #endif	/* QPOASES_QPROBLEMSCHUR_HPP */
 

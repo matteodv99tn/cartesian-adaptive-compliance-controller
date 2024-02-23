@@ -23,7 +23,7 @@
 
 
 /**
- *	\file include/cartesian_adaptive_compliance_controller/qpOASES/extras/OQPinterface.hpp
+ *	\file include/qpOASES/extras/OQPinterface.hpp
  *	\author Hans Joachim Ferreau, Andreas Potschka, Christian Kirches
  *	\version 3.2
  *	\date 2007-2017
@@ -39,7 +39,7 @@
 #define QPOASES_OQPINTERFACE_HPP
 
 
-#include <cartesian_adaptive_compliance_controller/qpOASES/Options.hpp>
+#include <qpOASES/Options.hpp>
 
 
 BEGIN_NAMESPACE_QPOASES

@@ -23,7 +23,7 @@
 
 
 /**
- *	\file include/cartesian_adaptive_compliance_controller/qpOASES/SubjectTo.hpp
+ *	\file include/qpOASES/SubjectTo.hpp
  *	\author Hans Joachim Ferreau, Andreas Potschka, Christian Kirches
  *	\version 3.2
  *	\date 2007-2017
@@ -37,13 +37,13 @@
 #define QPOASES_SUBJECTTO_HPP
 
 
-#include <cartesian_adaptive_compliance_controller/qpOASES/Indexlist.hpp>
+#include <qpOASES/Indexlist.hpp>
 
 
 BEGIN_NAMESPACE_QPOASES
 
 
-/** 
+/**
  *	\brief Base class for managing working sets of bounds and constraints.
  *
  *	This class manages working sets of bounds and constraints by storing
@@ -169,7 +169,7 @@ class SubjectTo
 		/** Frees all allocated memory.
 		 *  \return SUCCESSFUL_RETURN */
 		returnValue clear( );
-		
+
 		/** Copies all members from given rhs object.
 		 *  \return SUCCESSFUL_RETURN */
 		returnValue copy(	const SubjectTo& rhs	/**< Rhs object. */
@@ -219,7 +219,7 @@ class SubjectTo
 
 END_NAMESPACE_QPOASES
 
-#include <cartesian_adaptive_compliance_controller/qpOASES/SubjectTo.ipp>
+#include <qpOASES/SubjectTo.ipp>
 
 #endif	/* QPOASES_SUBJECTTO_HPP */
 

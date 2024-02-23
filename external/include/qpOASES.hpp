@@ -63,11 +63,11 @@
 
 #else /* default compilation mode */
 
-#include <cartesian_adaptive_compliance_controller/qpOASES/QProblemB.hpp>
-#include <cartesian_adaptive_compliance_controller/qpOASES/QProblem.hpp>
-#include <cartesian_adaptive_compliance_controller/qpOASES/SQProblem.hpp>
-#include <cartesian_adaptive_compliance_controller/qpOASES/SQProblemSchur.hpp>
-#include <cartesian_adaptive_compliance_controller/qpOASES/extras/OQPinterface.hpp>
-#include <cartesian_adaptive_compliance_controller/qpOASES/extras/SolutionAnalysis.hpp>
+#include <qpOASES/QProblemB.hpp>
+#include <qpOASES/QProblem.hpp>
+#include <qpOASES/SQProblem.hpp>
+#include <qpOASES/SQProblemSchur.hpp>
+#include <qpOASES/extras/OQPinterface.hpp>
+#include <qpOASES/extras/SolutionAnalysis.hpp>
 
 #endif

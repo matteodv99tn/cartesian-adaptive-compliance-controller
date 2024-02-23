@@ -23,7 +23,7 @@
 
 
 /**
- *	\file include/cartesian_adaptive_compliance_controller/qpOASES/Utils.hpp
+ *	\file include/qpOASES/Utils.hpp
  *	\author Hans Joachim Ferreau, Andreas Potschka, Christian Kirches
  *	\version 3.2
  *	\date 2007-2017
@@ -36,7 +36,7 @@
 #define QPOASES_UTILS_HPP
 
 
-#include <cartesian_adaptive_compliance_controller/qpOASES/MessageHandling.hpp>
+#include <qpOASES/MessageHandling.hpp>
 
 
 BEGIN_NAMESPACE_QPOASES
@@ -356,7 +356,7 @@ extern "C" void __cxa_pure_virtual( void );
 END_NAMESPACE_QPOASES
 
 
-#include <cartesian_adaptive_compliance_controller/qpOASES/Utils.ipp>
+#include <qpOASES/Utils.ipp>
 
 #endif	/* QPOASES_UTILS_HPP */
 

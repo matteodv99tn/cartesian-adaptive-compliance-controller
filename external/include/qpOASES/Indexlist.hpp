@@ -23,7 +23,7 @@
 
 
 /**
- *	\file include/cartesian_adaptive_compliance_controller/qpOASES/Indexlist.hpp
+ *	\file include/qpOASES/Indexlist.hpp
  *	\author Hans Joachim Ferreau, Andreas Potschka, Christian Kirches
  *	\version 3.2
  *	\date 2007-2017
@@ -37,7 +37,7 @@
 #define QPOASES_INDEXLIST_HPP
 
 
-#include <cartesian_adaptive_compliance_controller/qpOASES/Utils.hpp>
+#include <qpOASES/Utils.hpp>
 
 
 BEGIN_NAMESPACE_QPOASES
@@ -189,7 +189,7 @@ class Indexlist
 
 END_NAMESPACE_QPOASES
 
-#include <cartesian_adaptive_compliance_controller/qpOASES/Indexlist.ipp>
+#include <qpOASES/Indexlist.ipp>
 
 #endif	/* QPOASES_INDEXLIST_HPP */
 

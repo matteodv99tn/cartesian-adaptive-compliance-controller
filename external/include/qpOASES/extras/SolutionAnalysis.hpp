@@ -23,7 +23,7 @@
 
 
 /**
- *	\file include/cartesian_adaptive_compliance_controller/qpOASES/extras/SolutionAnalysis.hpp
+ *	\file include/qpOASES/extras/SolutionAnalysis.hpp
  *	\author Hans Joachim Ferreau (thanks to Boris Houska)
  *	\version 3.2
  *	\date 2008-2017
@@ -37,8 +37,8 @@
 #define QPOASES_SOLUTIONANALYSIS_HPP
 
 
-#include <cartesian_adaptive_compliance_controller/qpOASES/SQProblem.hpp>
-#include <cartesian_adaptive_compliance_controller/qpOASES/SQProblemSchur.hpp>
+#include <qpOASES/SQProblem.hpp>
+#include <qpOASES/SQProblemSchur.hpp>
 
 
 BEGIN_NAMESPACE_QPOASES
@@ -156,7 +156,7 @@ class SolutionAnalysis
 
 END_NAMESPACE_QPOASES
 
-#include <cartesian_adaptive_compliance_controller/qpOASES/extras/SolutionAnalysis.ipp>
+#include <qpOASES/extras/SolutionAnalysis.ipp>
 
 #endif	/* QPOASES_SOLUTIONANALYSIS_HPP */
 

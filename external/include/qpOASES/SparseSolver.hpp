@@ -23,7 +23,7 @@
 
 
 /**
- *	\file include/cartesian_adaptive_compliance_controller/qpOASES/SparseSolver.hpp
+ *	\file include/qpOASES/SparseSolver.hpp
  *	\author Andreas Waechter, Dennis Janka
  *	\version 3.2
  *	\date 2012-2017
@@ -35,7 +35,7 @@
 #ifndef QPOASES_SPARSESOLVER_HPP
 #define QPOASES_SPARSESOLVER_HPP
 
-#include <cartesian_adaptive_compliance_controller/qpOASES/Utils.hpp>
+#include <qpOASES/Utils.hpp>
 
 
 BEGIN_NAMESPACE_QPOASES

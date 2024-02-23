@@ -23,7 +23,7 @@
 
 
 /**
- *	\file include/cartesian_adaptive_compliance_controller/qpOASES/Constants.hpp
+ *	\file include/qpOASES/Constants.hpp
  *	\author Hans Joachim Ferreau, Andreas Potschka, Christian Kirches
  *	\version 3.2
  *	\date 2007-2017
@@ -36,7 +36,7 @@
 #define QPOASES_CONSTANTS_HPP
 
 
-#include <cartesian_adaptive_compliance_controller/qpOASES/Types.hpp>
+#include <qpOASES/Types.hpp>
 
 
 BEGIN_NAMESPACE_QPOASES

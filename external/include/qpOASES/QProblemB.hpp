@@ -23,7 +23,7 @@
 
 
 /**
- *	\file include/cartesian_adaptive_compliance_controller/qpOASES/QProblemB.hpp
+ *	\file include/qpOASES/QProblemB.hpp
  *	\author Hans Joachim Ferreau, Andreas Potschka, Christian Kirches
  *	\version 3.2
  *	\date 2007-2017
@@ -39,9 +39,9 @@
 #define QPOASES_QPROBLEMB_HPP
 
 
-#include <cartesian_adaptive_compliance_controller/qpOASES/Flipper.hpp>
-#include <cartesian_adaptive_compliance_controller/qpOASES/Options.hpp>
-#include <cartesian_adaptive_compliance_controller/qpOASES/Matrices.hpp>
+#include <qpOASES/Flipper.hpp>
+#include <qpOASES/Options.hpp>
+#include <qpOASES/Matrices.hpp>
 
 
 BEGIN_NAMESPACE_QPOASES
@@ -1011,7 +1011,7 @@ class QProblemB
 
 END_NAMESPACE_QPOASES
 
-#include <cartesian_adaptive_compliance_controller/qpOASES/QProblemB.ipp>
+#include <qpOASES/QProblemB.ipp>
 
 #endif	/* QPOASES_QPROBLEMB_HPP */
 

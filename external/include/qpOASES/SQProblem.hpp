@@ -23,7 +23,7 @@
 
 
 /**
- *	\file include/cartesian_adaptive_compliance_controller/qpOASES/SQProblem.hpp
+ *	\file include/qpOASES/SQProblem.hpp
  *	\author Hans Joachim Ferreau, Andreas Potschka, Christian Kirches
  *	\version 3.2
  *	\date 2007-2017
@@ -39,7 +39,7 @@
 #define QPOASES_SQPROBLEM_HPP
 
 
-#include <cartesian_adaptive_compliance_controller/qpOASES/QProblem.hpp>
+#include <qpOASES/QProblem.hpp>
 
 
 BEGIN_NAMESPACE_QPOASES
@@ -349,7 +349,7 @@ class SQProblem : public QProblem
 
 END_NAMESPACE_QPOASES
 
-#include <cartesian_adaptive_compliance_controller/qpOASES/SQProblem.ipp>
+#include <qpOASES/SQProblem.ipp>
 
 #endif	/* QPOASES_SQPROBLEM_HPP */
 

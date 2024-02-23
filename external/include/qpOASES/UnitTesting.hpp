@@ -23,7 +23,7 @@
 
 
 /**
- *	\file include/cartesian_adaptive_compliance_controller/qpOASES/UnitTesting.hpp
+ *	\file include/qpOASES/UnitTesting.hpp
  *	\author Hans Joachim Ferreau
  *	\version 3.2
  *	\date 2014-2017

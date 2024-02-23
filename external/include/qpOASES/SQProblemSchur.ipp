@@ -23,7 +23,7 @@
 
 
 /**
- *	\file include/cartesian_adaptive_compliance_controller/qpOASES/SQProblemSchur.ipp
+ *	\file include/qpOASES/SQProblemSchur.ipp
  *	\author Andreas Waechter, Dennis Janka
  *	\version 3.2
  *	\date 2012-2017

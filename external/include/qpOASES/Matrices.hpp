@@ -23,7 +23,7 @@
 
 
 /**
- *	\file include/cartesian_adaptive_compliance_controller/qpOASES/Matrices.hpp
+ *	\file include/qpOASES/Matrices.hpp
  *	\author Andreas Potschka, Hans Joachim Ferreau, Christian Kirches
  *	\version 3.2
  *	\date 2009-2017
@@ -38,8 +38,8 @@
 #define QPOASES_MATRICES_HPP
 
 
-#include <cartesian_adaptive_compliance_controller/qpOASES/Utils.hpp>
-#include <cartesian_adaptive_compliance_controller/qpOASES/Indexlist.hpp>
+#include <qpOASES/Utils.hpp>
+#include <qpOASES/Indexlist.hpp>
 
 
 BEGIN_NAMESPACE_QPOASES

@@ -4,6 +4,8 @@
 
 #include "cartesian_compliance_controller/cartesian_compliance_controller.h"
 #include "qpOASES.hpp"
+#include "rclcpp/time.hpp"
+#include "rclcpp_lifecycle/node_interfaces/lifecycle_node_interface.hpp"
 
 USING_NAMESPACE_QPOASES
 
@@ -11,8 +13,28 @@ namespace cartesian_adaptive_compliance_controller {
 
 class CartesianAdaptiveComplianceController
         : public cartesian_compliance_controller::CartesianComplianceController {
+public:
+    rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn
+    on_configure(const rclcpp_lifecycle::State& previous_state) override;
 
-        };
+    rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn
+    on_activate(const rclcpp_lifecycle::State& previous_state) override;
+
+    rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn
+    on_deactivate(const rclcpp_lifecycle::State& previous_state) override;
+
+
+// clang-format off
+#if defined CARTESIAN_CONTROLLERS_GALACTIC || defined CARTESIAN_CONTROLLERS_HUMBLE ||  \
+        defined                                       CARTESIAN_CONTROLLERS_IRON
+    controller_interface::return_type
+    update(const rclcpp::Time& time, const rclcpp::Duration& period) override;
+#elif defined CARTESIAN_CONTROLLERS_FOXY
+    controller_interface::return_type update() override;
+#endif
+    // clang-format on
+private:
+};
 
 }  // namespace cartesian_adaptive_compliance_controller
 

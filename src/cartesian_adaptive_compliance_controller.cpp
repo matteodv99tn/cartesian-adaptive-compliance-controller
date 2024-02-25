@@ -15,11 +15,16 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <memory>
+#include <vector>
 
 #include "cartesian_controller_base/Utility.h"
 #include "controller_interface/controller_interface_base.hpp"
 #include "controller_interface/helpers.hpp"
 #include "hardware_interface/types/hardware_interface_type_values.hpp"
+#include "kdl/chainfksolvervel_recursive.hpp"
+#include "kdl/jntarray.hpp"
+#include "kdl/jntarrayvel.hpp"
 #include "qpOASES.hpp"
 #include "qpOASES/MessageHandling.hpp"
 #include "rclcpp/logging.hpp"
@@ -86,6 +91,9 @@ CartesianAdaptiveComplianceController::on_configure(
         return LifecycleNodeInterface::CallbackReturn::ERROR;
     }
     _joint_velocities = ctrl::VectorND::Zero(joints.size());
+
+    _kin_solver =
+            std::make_unique<KDL::ChainFkSolverVel_recursive>(Base::m_robot_chain);
 
     // Initialisation of the variables
     _initializeVariables();
@@ -238,6 +246,25 @@ void CartesianAdaptiveComplianceController::_initializeQpProblem() {
 void CartesianAdaptiveComplianceController::_updateStiffness() {
     // TODO: fill values of the qp variables
 
+    KDL::FrameVel  frame_vel = _getEndEffectorFrameVel();
+    ctrl::Vector3D x{// Current position
+                     frame_vel.p.p.x(),
+                     frame_vel.p.p.y(),
+                     frame_vel.p.p.z()};
+
+    ctrl::Vector3D xd{// Current velocity
+                      frame_vel.p.v.x(),
+                      frame_vel.p.v.y(),
+                      frame_vel.p.v.z()};
+
+    ctrl::Vector3D x_des{// Desired position
+                         MotionBase::m_target_frame.p.x(),
+                         MotionBase::m_target_frame.p.y(),
+                         MotionBase::m_target_frame.p.z()};
+
+    ctrl::Vector3D x_tilde  = x - x_des;
+    ctrl::Vector3D xd_tilde = -xd;
+
     // Solve the QP problem:
     qpOASES::int_t nWSR            = 10;
     qpOASES::int_t qp_solve_status = qpOASES::getSimpleStatus(_qp_prob.init(
@@ -261,3 +288,23 @@ void CartesianAdaptiveComplianceController::_updateStiffness() {
 
     // TODO: write back results to update stiffness
 }
+
+KDL::FrameVel CartesianAdaptiveComplianceController::_getEndEffectorFrameVel() const {
+    KDL::JntArray q(Base::m_joint_state_pos_handles.size());
+    KDL::JntArray q_dot(Base::m_joint_state_pos_handles.size());
+    for (std::size_t i = 0; i < Base::m_joint_state_pos_handles.size(); ++i) {
+        q(i)     = Base::m_joint_state_pos_handles[i].get().get_value();
+        q_dot(i) = _joint_velocities(i);
+    }
+
+    KDL::FrameVel    frame_vel;
+    KDL::JntArrayVel joint_data(q, q_dot);
+    _kin_solver->JntToCart(joint_data, frame_vel);
+    return frame_vel;
+}
+
+#include <pluginlib/class_list_macros.hpp>
+PLUGINLIB_EXPORT_CLASS(
+        cartesian_adaptive_compliance_controller::CartesianAdaptiveComplianceController,
+        controller_interface::ControllerInterface
+)

@@ -10,6 +10,8 @@
 #include "cartesian_compliance_controller/cartesian_compliance_controller.h"
 #include "cartesian_controller_base/Utility.h"
 #include "hardware_interface/loaned_state_interface.hpp"
+#include "kdl/chainfksolvervel_recursive.hpp"
+#include "kdl/framevel.hpp"
 #include "qpOASES.hpp"
 #include "qpOASES/QProblem.hpp"
 #include "rclcpp/time.hpp"
@@ -60,7 +62,6 @@ private:
      */
     void _synchroniseJointVelocities();
 
-
     /**
      * @brief Initialise some variables of the controller reading from the parameter
      * server.
@@ -70,7 +71,6 @@ private:
      *
      */
     void _initializeVariables();
-
 
     /**
      * @brief Initialize variables and solvers for the QP problem
@@ -85,6 +85,12 @@ private:
      *
      */
     void _updateStiffness();
+
+    /**
+     * @brief Returns the end-effector frame velocity
+     *
+     */
+    KDL::FrameVel _getEndEffectorFrameVel() const;
 
 
     //   ___  ____    ____            _     _
@@ -122,6 +128,7 @@ private:
 
     ctrl::Matrix6D                                   _Kmin, _Kmax;
     ctrl::Vector3D                                   _F_min, _F_max;
+    std::unique_ptr<KDL::ChainFkSolverVel_recursive> _kin_solver;
 
     double inline _tankEnergy() const { return 0.5 * _x_tank * _x_tank; };
 };

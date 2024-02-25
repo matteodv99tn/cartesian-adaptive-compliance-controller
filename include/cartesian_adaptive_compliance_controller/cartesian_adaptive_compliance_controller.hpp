@@ -42,8 +42,27 @@ private:
                    _joint_state_vel_handles;
     ctrl::VectorND _joint_velocities;
 
-    void _updateStiffness();
+    /**
+     * @brief reads joint velocity state interfaces and updates the variable
+     * _joint_velocities
+     *
+     */
     void _synchroniseJointVelocities();
+
+    /**
+     * @brief Initialize variables and solvers for the QP problem
+     *
+     */
+    void _initializeQpProblem();
+
+    /**
+     * @brief fills the variable of the QP problem (based on the current state), solves
+     * it and writes back the m_stiffness matrix (in the CartesianComplianceController
+     * parent class)
+     *
+     */
+    void _updateStiffness();
+
 };
 
 }  // namespace cartesian_adaptive_compliance_controller

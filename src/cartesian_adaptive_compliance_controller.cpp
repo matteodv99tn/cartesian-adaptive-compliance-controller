@@ -106,6 +106,8 @@ controller_interface::return_type CartesianAdaptiveComplianceController::update(
 
     // Synchronize the internal model and the real robot
     Base::m_ik_solver->synchronizeJointPositions(Base::m_joint_state_pos_handles);
+    _synchroniseJointVelocities();
+    _updateStiffness();
 
     // --- Same control loop of the cartesian compliance controller
     for (int i = 0; i < Base::m_iterations; ++i) {
@@ -123,4 +125,14 @@ void CartesianAdaptiveComplianceController::_synchroniseJointVelocities(){
     for(std::size_t i = 0; i < _joint_state_vel_handles.size(); ++i){
         _joint_velocities(i) = _joint_state_vel_handles[i].get().get_value();
     }
+}
+
+
+void CartesianAdaptiveComplianceController::_initializeQpProblem(){
+    // TODO
+}
+
+
+void CartesianAdaptiveComplianceController::_updateStiffness(){
+    // TODO
 }

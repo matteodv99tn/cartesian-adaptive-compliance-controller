@@ -28,6 +28,14 @@
 using cartesian_adaptive_compliance_controller::CartesianAdaptiveComplianceController;
 using rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface;
 
+namespace defaults {
+const double              x0_tank   = 1.0;
+const std::vector<double> Q_weights = {3200.0, 3200.0, 3200.0};
+const std::vector<double> R_weights = {0.01, 0.01, 0.01};
+const std::vector<double> F_min     = {-15.0, -15.0, -15.0};
+const std::vector<double> F_max     = {15.0, 15.0, 15.0};
+}  // namespace defaults
+
 LifecycleNodeInterface::CallbackReturn CartesianAdaptiveComplianceController::on_init(
 ) {
     LifecycleNodeInterface::CallbackReturn parent_ret =
@@ -37,7 +45,12 @@ LifecycleNodeInterface::CallbackReturn CartesianAdaptiveComplianceController::on
         return parent_ret;
     }
 
-    auto_declare<double>("tank.initial_state", 1.0);
+    auto_declare<double>("tank.initial_state", defaults::x0_tank);
+    auto_declare<std::vector<double>>("Q_weights", defaults::Q_weights);
+    auto_declare<std::vector<double>>("R_weights", defaults::R_weights);
+    auto_declare<std::vector<double>>("F_min", defaults::F_min);
+    auto_declare<std::vector<double>>("F_max", defaults::F_max);
+    return LifecycleNodeInterface::CallbackReturn::SUCCESS;
 }
 
 LifecycleNodeInterface::CallbackReturn
@@ -145,8 +158,10 @@ void CartesianAdaptiveComplianceController::_synchroniseJointVelocities() {
 }
 
 void CartesianAdaptiveComplianceController::_initializeVariables() {
+    // Tank initialisation
     _x_tank = get_node()->get_parameter("tank.initial_state").as_double();
 
+    // Minimum and maximum stiffness
     _Kmin.diagonal() = ctrl::Vector6D(
             {get_node()->get_parameter("stiffness.trans_x").as_double(),
              get_node()->get_parameter("stiffness.trans_y").as_double(),
@@ -155,7 +170,48 @@ void CartesianAdaptiveComplianceController::_initializeVariables() {
              get_node()->get_parameter("stiffness.rot_y").as_double(),
              get_node()->get_parameter("stiffness.rot_z").as_double()}
     );
-    m_stiffness = _Kmin;
+    _Kmax.diagonal() = ctrl::Vector6D({1000.0, 1000.0, 1000.0, 100.0, 100.0, 100.0});
+    m_stiffness      = _Kmin;
+
+    // Weight matrices for the QP problem
+    auto Q_weights = get_node()->get_parameter("Q_weights").as_double_array();
+    auto R_weights = get_node()->get_parameter("R_weights").as_double_array();
+    if (Q_weights.size() != 3) {
+        RCLCPP_WARN(
+                get_node()->get_logger(),
+                "Q_weights must have 3 elements, switching to default values"
+        );
+        Q_weights = defaults::Q_weights;
+    }
+    if (R_weights.size() != 3) {
+        RCLCPP_WARN(
+                get_node()->get_logger(),
+                "R_weights must have 3 elements, switching to default values"
+        );
+        R_weights = defaults::R_weights;
+    }
+    _Q.diagonal() = ctrl::Vector3D({Q_weights[0], Q_weights[1], Q_weights[2]});
+    _R.diagonal() = ctrl::Vector3D({R_weights[0], R_weights[1], R_weights[2]});
+
+    // Force limits
+    auto F_min = get_node()->get_parameter("F_min").as_double_array();
+    auto F_max = get_node()->get_parameter("F_max").as_double_array();
+    if (F_min.size() != 3) {
+        RCLCPP_WARN(
+                get_node()->get_logger(),
+                "F_min must have 3 elements, switching to default values"
+        );
+        F_min = defaults::F_min;
+    }
+    if (F_max.size() != 3) {
+        RCLCPP_WARN(
+                get_node()->get_logger(),
+                "F_max must have 3 elements, switching to default values"
+        );
+        F_max = defaults::F_max;
+    }
+    _F_min = ctrl::Vector3D({F_min[0], F_min[1], F_min[2]});
+    _F_max = ctrl::Vector3D({F_max[0], F_max[1], F_max[2]});
 }
 
 void CartesianAdaptiveComplianceController::_initializeQpProblem() {

@@ -56,6 +56,29 @@ cartesian_adaptive_compliance_controller:
     tank:
         initial_state: 1.0
 
+    qp:
+        Fmin:
+
+    Q_weights:
+        - 3200.0
+        - 3200.0
+        - 3200.0
+
+    R_weights:
+        - 0.01
+        - 0.01
+        - 0.01
+
+    F_min:
+        - -15.0
+        - -15.0
+        - -15.0
+
+    F_max:
+        - 15.0
+        - 15.0
+        - 15.0
+
 # More controller specifications here
 # ...
 ```

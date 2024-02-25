@@ -4,6 +4,7 @@
 
 #include <Eigen/Dense>
 #include <functional>
+#include <memory>
 #include <vector>
 
 #include "cartesian_compliance_controller/cartesian_compliance_controller.h"
@@ -17,11 +18,12 @@
 namespace cartesian_adaptive_compliance_controller {
 using QpMatrix =
         Eigen::Matrix<qpOASES::real_t, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
-using QpVector = Eigen::Matrix<qpOASES::real_t, Eigen::Dynamic, 1, Eigen::RowMajor>;
+using QpVector = Eigen::Matrix<qpOASES::real_t, Eigen::Dynamic, 1>;
 
 class CartesianAdaptiveComplianceController
         : public cartesian_compliance_controller::CartesianComplianceController {
 public:
+    CartesianAdaptiveComplianceController() = default;
 
     // Note:
     // This way the controller won't work with the Foxy version of ROS2
@@ -91,13 +93,24 @@ private:
     // | |_| |  __/  |  __/| | | (_) | |_) | |  __/ | | | | |
     //  \__\_\_|     |_|   |_|  \___/|_.__/|_|\___|_| |_| |_|
     //
+    /**
+     * Note: qpOASES solves minimisation problem of the following form:
+     *
+     *     min  0.5 * x^T * H * x + x^T * g
+     *    s.t.  lbA <= A * x <= ubA
+     *          lb <= x <= ub
+     *
+     */
     qpOASES::QProblem _qp_prob;
     QpMatrix          _qp_H;
-    QpMatrix          _qp_A;
     QpVector          _qp_g;
-    QpVector          _qp_x_lb, _qp_x_ub;
+    QpMatrix          _qp_A;
     QpVector          _qp_A_lb, _qp_A_ub;
+    QpVector          _qp_x_lb, _qp_x_ub;
     QpVector          _qp_x_sol;
+
+    ctrl::Matrix3D _Q;
+    ctrl::Matrix3D _R;
 
     //  _____           _
     // |_   _|_ _ _ __ | | __
@@ -107,7 +120,8 @@ private:
     //
     double _x_tank;
 
-    ctrl::Matrix6D _Kmin;
+    ctrl::Matrix6D                                   _Kmin, _Kmax;
+    ctrl::Vector3D                                   _F_min, _F_max;
 
     double inline _tankEnergy() const { return 0.5 * _x_tank * _x_tank; };
 };

@@ -2,18 +2,21 @@
 #define CARTESIAN_ADAPTIVE_COMPLIANCE_CONTROLLER_HPP__
 
 
+#include <Eigen/Dense>
 #include <functional>
 #include <vector>
 
 #include "cartesian_compliance_controller/cartesian_compliance_controller.h"
 #include "hardware_interface/loaned_state_interface.hpp"
 #include "qpOASES.hpp"
+#include "qpOASES/QProblem.hpp"
 #include "rclcpp/time.hpp"
 #include "rclcpp_lifecycle/node_interfaces/lifecycle_node_interface.hpp"
 
-USING_NAMESPACE_QPOASES
-
 namespace cartesian_adaptive_compliance_controller {
+using QpMatrix =
+        Eigen::Matrix<qpOASES::real_t, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
+using QpVector = Eigen::Matrix<qpOASES::real_t, Eigen::Dynamic, 1, Eigen::RowMajor>;
 
 class CartesianAdaptiveComplianceController
         : public cartesian_compliance_controller::CartesianComplianceController {
@@ -63,6 +66,20 @@ private:
      */
     void _updateStiffness();
 
+
+    //   ___  ____    ____            _     _
+    //  / _ \|  _ \  |  _ \ _ __ ___ | |__ | | ___ _ __ ___
+    // | | | | |_) | | |_) | '__/ _ \| '_ \| |/ _ \ '_ ` _ \
+    // | |_| |  __/  |  __/| | | (_) | |_) | |  __/ | | | | |
+    //  \__\_\_|     |_|   |_|  \___/|_.__/|_|\___|_| |_| |_|
+    //
+    qpOASES::QProblem _qp_prob;
+    QpMatrix          _qp_H;
+    QpMatrix          _qp_A;
+    QpVector          _qp_g;
+    QpVector          _qp_x_lb, _qp_x_ub;
+    QpVector          _qp_A_lb, _qp_A_ub;
+    QpVector          _qp_x_sol;
 };
 
 }  // namespace cartesian_adaptive_compliance_controller

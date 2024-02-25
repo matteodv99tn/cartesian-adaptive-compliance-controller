@@ -19,6 +19,8 @@
 #include "controller_interface/controller_interface_base.hpp"
 #include "controller_interface/helpers.hpp"
 #include "hardware_interface/types/hardware_interface_type_values.hpp"
+#include "qpOASES.hpp"
+#include "qpOASES/MessageHandling.hpp"
 #include "rclcpp/logging.hpp"
 #include "rclcpp_lifecycle/node_interfaces/lifecycle_node_interface.hpp"
 
@@ -58,6 +60,9 @@ CartesianAdaptiveComplianceController::on_configure(
         return LifecycleNodeInterface::CallbackReturn::ERROR;
     }
     _joint_velocities = ctrl::VectorND::Zero(joints.size());
+
+    // Tank configuration
+    _x_tank = 1.0;
 
     return LifecycleNodeInterface::CallbackReturn::SUCCESS;
 }
@@ -120,19 +125,56 @@ controller_interface::return_type CartesianAdaptiveComplianceController::update(
     return controller_interface::return_type::OK;
 }
 
-
-void CartesianAdaptiveComplianceController::_synchroniseJointVelocities(){
-    for(std::size_t i = 0; i < _joint_state_vel_handles.size(); ++i){
+void CartesianAdaptiveComplianceController::_synchroniseJointVelocities() {
+    for (std::size_t i = 0; i < _joint_state_vel_handles.size(); ++i) {
         _joint_velocities(i) = _joint_state_vel_handles[i].get().get_value();
     }
 }
 
-
-void CartesianAdaptiveComplianceController::_initializeQpProblem(){
+void CartesianAdaptiveComplianceController::_initializeQpProblem() {
     // TODO
+
+    // Initialise solver
+    const int        nv = 3;  // Numbers of variables
+    const int        nc = 5;  // Number of constraints
+    qpOASES::Options options;
+    options.printLevel = qpOASES::PL_NONE;
+
+    _qp_prob = qpOASES::QProblem(nv, nc);
+    _qp_prob.setOptions(options);
+
+    _qp_H     = QpMatrix::Zero(nv, nv);
+    _qp_A     = QpMatrix::Zero(nc, nv);
+    _qp_x_lb  = QpVector::Zero(nv);
+    _qp_x_ub  = QpVector::Zero(nv);
+    _qp_A_lb  = QpVector::Zero(nc);
+    _qp_A_ub  = QpVector::Zero(nc);
+    _qp_x_sol = QpVector::Zero(nv);
 }
 
+void CartesianAdaptiveComplianceController::_updateStiffness() {
+    // TODO: fill values of the qp variables
 
-void CartesianAdaptiveComplianceController::_updateStiffness(){
-    // TODO
+    // Solve the QP problem:
+    qpOASES::int_t nWSR            = 10;
+    qpOASES::int_t qp_solve_status = qpOASES::getSimpleStatus(_qp_prob.init(
+            _qp_H.data(),
+            _qp_g.data(),
+            _qp_A.data(),
+            _qp_x_lb.data(),
+            _qp_x_ub.data(),
+            _qp_A_lb.data(),
+            _qp_A_ub.data(),
+            nWSR
+    ));
+    _qp_prob.getPrimalSolution(_qp_x_sol.data());
+
+
+    if (qp_solve_status != qpOASES::SUCCESSFUL_RETURN) {
+        RCLCPP_ERROR(get_node()->get_logger(), "QP solver failed");
+        // Maybe set default values
+        return;
+    }
+
+    // TODO: write back results to update stiffness
 }

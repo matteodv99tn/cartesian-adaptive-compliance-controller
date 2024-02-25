@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <cstdio>
 
+#include "cartesian_controller_base/Utility.h"
 #include "controller_interface/controller_interface_base.hpp"
 #include "controller_interface/helpers.hpp"
 #include "hardware_interface/types/hardware_interface_type_values.hpp"
@@ -26,6 +27,18 @@
 
 using cartesian_adaptive_compliance_controller::CartesianAdaptiveComplianceController;
 using rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface;
+
+LifecycleNodeInterface::CallbackReturn CartesianAdaptiveComplianceController::on_init(
+) {
+    LifecycleNodeInterface::CallbackReturn parent_ret =
+            CartesianComplianceController::on_init();
+    if (parent_ret != CallbackReturn::SUCCESS) {
+        RCLCPP_WARN(get_node()->get_logger(), "Parent class failed to initialize");
+        return parent_ret;
+    }
+
+    auto_declare<double>("tank.initial_state", 1.0);
+}
 
 LifecycleNodeInterface::CallbackReturn
 CartesianAdaptiveComplianceController::on_configure(
@@ -61,8 +74,8 @@ CartesianAdaptiveComplianceController::on_configure(
     }
     _joint_velocities = ctrl::VectorND::Zero(joints.size());
 
-    // Tank configuration
-    _x_tank = 1.0;
+    // Initialisation of the variables
+    _initializeVariables();
 
     return LifecycleNodeInterface::CallbackReturn::SUCCESS;
 }
@@ -129,6 +142,20 @@ void CartesianAdaptiveComplianceController::_synchroniseJointVelocities() {
     for (std::size_t i = 0; i < _joint_state_vel_handles.size(); ++i) {
         _joint_velocities(i) = _joint_state_vel_handles[i].get().get_value();
     }
+}
+
+void CartesianAdaptiveComplianceController::_initializeVariables() {
+    _x_tank = get_node()->get_parameter("tank.initial_state").as_double();
+
+    _Kmin.diagonal() = ctrl::Vector6D(
+            {get_node()->get_parameter("stiffness.trans_x").as_double(),
+             get_node()->get_parameter("stiffness.trans_y").as_double(),
+             get_node()->get_parameter("stiffness.trans_z").as_double(),
+             get_node()->get_parameter("stiffness.rot_x").as_double(),
+             get_node()->get_parameter("stiffness.rot_y").as_double(),
+             get_node()->get_parameter("stiffness.rot_z").as_double()}
+    );
+    m_stiffness = _Kmin;
 }
 
 void CartesianAdaptiveComplianceController::_initializeQpProblem() {

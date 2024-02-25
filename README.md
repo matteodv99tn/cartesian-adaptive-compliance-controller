@@ -7,7 +7,7 @@ Below is an example `controller_manager.yaml` for a controller specific configur
 ```yaml
 controller_manager:
   ros__parameters:
-    update_rate: 100  # Hz
+    update_rate: 500  # Hz
 
     cartesian_adaptive_compliance_controller:
       type: cartesian_adaptive_compliance_controller/CartesianAdaptiveComplianceController
@@ -29,12 +29,10 @@ cartesian_adaptive_compliance_controller:
       - joint5
       - joint6
 
-    # Choose: position or velocity.
     command_interfaces:
       - position
-        #- velocity
 
-    stiffness:  # w.r.t. compliance_ref_link
+    stiffness:  # minimum stiff. values w.r.t. compliance_ref_link
         trans_x: 500
         trans_y: 500
         trans_z: 500
@@ -54,8 +52,10 @@ cartesian_adaptive_compliance_controller:
         rot_y: {p: 1.5}
         rot_z: {p: 1.5}
 
+    # Parameters of the QP and adaptive controller
+    tank:
+        initial_state: 1.0
 
 # More controller specifications here
 # ...
-
 ```

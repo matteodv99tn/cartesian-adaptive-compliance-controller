@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "cartesian_compliance_controller/cartesian_compliance_controller.h"
+#include "cartesian_controller_base/Utility.h"
 #include "hardware_interface/loaned_state_interface.hpp"
 #include "qpOASES.hpp"
 #include "qpOASES/QProblem.hpp"
@@ -21,6 +22,11 @@ using QpVector = Eigen::Matrix<qpOASES::real_t, Eigen::Dynamic, 1, Eigen::RowMaj
 class CartesianAdaptiveComplianceController
         : public cartesian_compliance_controller::CartesianComplianceController {
 public:
+
+    // Note:
+    // This way the controller won't work with the Foxy version of ROS2
+    virtual LifecycleNodeInterface::CallbackReturn on_init() override;
+
     rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn
     on_configure(const rclcpp_lifecycle::State& previous_state) override;
 
@@ -52,6 +58,18 @@ private:
      */
     void _synchroniseJointVelocities();
 
+
+    /**
+     * @brief Initialise some variables of the controller reading from the parameter
+     * server.
+     *
+     * For instance:
+     *  - minimum stiffness
+     *
+     */
+    void _initializeVariables();
+
+
     /**
      * @brief Initialize variables and solvers for the QP problem
      *
@@ -80,6 +98,18 @@ private:
     QpVector          _qp_x_lb, _qp_x_ub;
     QpVector          _qp_A_lb, _qp_A_ub;
     QpVector          _qp_x_sol;
+
+    //  _____           _
+    // |_   _|_ _ _ __ | | __
+    //   | |/ _` | '_ \| |/ /
+    //   | | (_| | | | |   <
+    //   |_|\__,_|_| |_|_|\_\
+    //
+    double _x_tank;
+
+    ctrl::Matrix6D _Kmin;
+
+    double inline _tankEnergy() const { return 0.5 * _x_tank * _x_tank; };
 };
 
 }  // namespace cartesian_adaptive_compliance_controller

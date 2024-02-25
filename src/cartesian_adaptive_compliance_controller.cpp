@@ -92,10 +92,32 @@ CartesianAdaptiveComplianceController::on_deactivate(
     return LifecycleNodeInterface::CallbackReturn::SUCCESS;
 }
 
+#if defined CARTESIAN_CONTROLLERS_GALACTIC || defined CARTESIAN_CONTROLLERS_HUMBLE ||  \
+        defined                                       CARTESIAN_CONTROLLERS_IRON
+controller_interface::return_type CartesianAdaptiveComplianceController::update(
+        const rclcpp::Time& time, const rclcpp::Duration& period
+) {
+#elif defined CARTESIAN_CONTROLLERS_FOXY
 controller_interface::return_type CartesianAdaptiveComplianceController::update() {
+#endif
     // TODO: proper control loop
     // Most probably we can't directly call CartesianComplianceController::update()
     // since we need to add stuff in the middle of the code
+
+    // Synchronize the internal model and the real robot
+    Base::m_ik_solver->synchronizeJointPositions(Base::m_joint_state_pos_handles);
+
+    // --- Same control loop of the cartesian compliance controller
+    for (int i = 0; i < Base::m_iterations; ++i) {
+        auto           internal_period = rclcpp::Duration::from_seconds(0.02);
+        ctrl::Vector6D error           = computeComplianceError();
+        Base::computeJointControlCmds(error, internal_period);
+    }
+    Base::writeJointControlCmds();
+
+    return controller_interface::return_type::OK;
+}
+
 
 void CartesianAdaptiveComplianceController::_synchroniseJointVelocities(){
     for(std::size_t i = 0; i < _joint_state_vel_handles.size(); ++i){

@@ -30,6 +30,7 @@ AlwaysBreakBeforeMultilineStrings: True
 BinPackArguments: False
 BinPackParameters: False
 BreakBeforeBraces: Attach
+BreakBeforeBinaryOperators: All
 BreakConstructorInitializers: AfterColon
 BreakInheritanceList: AfterComma
 BreakStringLiterals: True

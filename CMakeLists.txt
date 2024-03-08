@@ -91,7 +91,7 @@ target_compile_definitions(${PROJECT_NAME} PUBLIC "PLUGINLIB__DISABLE_BOOST_FUNC
 # Install and export
 #--------------------------------------------------------------------------------
 
-pluginlib_export_plugin_description_file(controller_interface cartesian_compliance_controller_plugin.xml)
+pluginlib_export_plugin_description_file(controller_interface cartesian_adaptive_compliance_controller_plugin.xml)
 
 # Note: The workflow as described here https://docs.ros.org/en/foxy/How-To-Guides/Ament-CMake-Documentation.html#building-a-library
 # does not work for me.

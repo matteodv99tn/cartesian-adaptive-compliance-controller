@@ -15,6 +15,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <iostream>
 #include <memory>
 #include <vector>
 
@@ -43,8 +44,8 @@ const std::vector<double> F_max     = {15.0, 15.0, 15.0};
 
 LifecycleNodeInterface::CallbackReturn CartesianAdaptiveComplianceController::on_init(
 ) {
-    LifecycleNodeInterface::CallbackReturn parent_ret =
-            CartesianComplianceController::on_init();
+    LifecycleNodeInterface::CallbackReturn parent_ret
+            = CartesianComplianceController::on_init();
     if (parent_ret != CallbackReturn::SUCCESS) {
         RCLCPP_WARN(get_node()->get_logger(), "Parent class failed to initialize");
         return parent_ret;
@@ -62,8 +63,8 @@ LifecycleNodeInterface::CallbackReturn
 CartesianAdaptiveComplianceController::on_configure(
         const rclcpp_lifecycle::State& previous_state
 ) {
-    CallbackReturn parent_ret =
-            CartesianComplianceController::on_configure(previous_state);
+    CallbackReturn parent_ret
+            = CartesianComplianceController::on_configure(previous_state);
     if (parent_ret != CallbackReturn::SUCCESS) {
         RCLCPP_WARN(get_node()->get_logger(), "Parent class failed to configure");
         return parent_ret;
@@ -84,9 +85,8 @@ LifecycleNodeInterface::CallbackReturn
 CartesianAdaptiveComplianceController::on_activate(
         const rclcpp_lifecycle::State& previous_state
 ) {
-    RCLCPP_INFO(get_node()->get_logger(), "Activating adaptive controller");
-    CallbackReturn parent_ret =
-            CartesianComplianceController::on_activate(previous_state);
+    CallbackReturn parent_ret
+            = CartesianComplianceController::on_activate(previous_state);
     if (parent_ret != CallbackReturn::SUCCESS) {
         RCLCPP_WARN(get_node()->get_logger(), "Parent class failed to activate");
         return parent_ret;
@@ -107,26 +107,15 @@ CartesianAdaptiveComplianceController::on_activate(
             hardware_interface::HW_IF_VELOCITY,
             _joint_state_vel_handles
     );
-    for (auto& handle : _joint_state_vel_handles) {
-        RCLCPP_INFO(
-                get_node()->get_logger(),
-                "Joint %s velocity interface activated",
-                handle.get().get_name()
-        );
-    }
 
     if (!got_vel_interfaces) {
         RCLCPP_ERROR(get_node()->get_logger(), "Failed to get velocity interfaces");
         return LifecycleNodeInterface::CallbackReturn::ERROR;
     }
-    RCLCPP_INFO(
-            get_node()->get_logger(),
-            "Got %d state interfaces",
-            state_interfaces_.size()
-    );
+
     _joint_velocities = ctrl::VectorND::Zero(joints.size());
-    _kin_solver =
-            std::make_unique<KDL::ChainFkSolverVel_recursive>(Base::m_robot_chain);
+    _kin_solver
+            = std::make_unique<KDL::ChainFkSolverVel_recursive>(Base::m_robot_chain);
     return LifecycleNodeInterface::CallbackReturn::SUCCESS;
 }
 
@@ -134,8 +123,8 @@ LifecycleNodeInterface::CallbackReturn
 CartesianAdaptiveComplianceController::on_deactivate(
         const rclcpp_lifecycle::State& previous_state
 ) {
-    CallbackReturn parent_ret =
-            CartesianComplianceController::on_deactivate(previous_state);
+    CallbackReturn parent_ret
+            = CartesianComplianceController::on_deactivate(previous_state);
     if (parent_ret != CallbackReturn::SUCCESS) {
         RCLCPP_WARN(get_node()->get_logger(), "Parent class failed to deactivate");
         return parent_ret;
@@ -145,8 +134,8 @@ CartesianAdaptiveComplianceController::on_deactivate(
     return LifecycleNodeInterface::CallbackReturn::SUCCESS;
 }
 
-#if defined CARTESIAN_CONTROLLERS_GALACTIC || defined CARTESIAN_CONTROLLERS_HUMBLE ||  \
-        defined                                       CARTESIAN_CONTROLLERS_IRON
+#if defined CARTESIAN_CONTROLLERS_GALACTIC || defined CARTESIAN_CONTROLLERS_HUMBLE     \
+        || defined                                    CARTESIAN_CONTROLLERS_IRON
 controller_interface::return_type CartesianAdaptiveComplianceController::update(
         const rclcpp::Time& time, const rclcpp::Duration& period
 ) {
@@ -159,9 +148,12 @@ controller_interface::return_type CartesianAdaptiveComplianceController::update(
 
     // Synchronize the internal model and the real robot
     Base::m_ik_solver->synchronizeJointPositions(Base::m_joint_state_pos_handles);
-    RCLCPP_INFO(get_node()->get_logger(), "Synchronis");
     _synchroniseJointVelocities();
-    _updateStiffness();
+    static bool is_first = true;
+    if (is_first) {
+        _updateStiffness();
+        is_first = false;
+    }
 
     // --- Same control loop of the cartesian compliance controller
     for (int i = 0; i < Base::m_iterations; ++i) {
@@ -177,7 +169,6 @@ controller_interface::return_type CartesianAdaptiveComplianceController::update(
 void CartesianAdaptiveComplianceController::_synchroniseJointVelocities() {
     for (std::size_t i = 0; i < _joint_state_vel_handles.size(); ++i) {
         _joint_velocities(i) = _joint_state_vel_handles[i].get().get_value();
-        RCLCPP_INFO(get_node()->get_logger(), "Joint #%d velocity: %f", i, _joint_velocities(i));
     }
 }
 
@@ -240,7 +231,6 @@ void CartesianAdaptiveComplianceController::_initializeVariables() {
 
 void CartesianAdaptiveComplianceController::_initializeQpProblem() {
     // TODO
-    RCLCPP_INFO(get_node()->get_logger(), "Initialising QP solver");
 
     // Initialise solver
     const int nv = 3;  // Numbers of variables
@@ -248,7 +238,7 @@ void CartesianAdaptiveComplianceController::_initializeQpProblem() {
 
     qpOASES::Options options;
     options.printLevel = qpOASES::PL_NONE;
-    _qp_prob = qpOASES::QProblem(nv, nc);
+    _qp_prob           = qpOASES::QProblem(nv, nc);
     _qp_prob.setOptions(options);
 
     _qp_H     = QpMatrix::Zero(nv, nv);
@@ -284,9 +274,8 @@ void CartesianAdaptiveComplianceController::_updateStiffness() {
     ctrl::Vector3D xd_tilde = -xd;
 
     // Solve the QP problem:
-    qpOASES::int_t nWSR            = 10;
-    RCLCPP_INFO(get_node()->get_logger(), "Solving QP problem");
-    qpOASES::int_t qp_solve_status = qpOASES::getSimpleStatus(_qp_prob.init(
+    qpOASES::int_t       nWSR = 10;
+    qpOASES::returnValue ret  = _qp_prob.init(
             _qp_H.data(),
             _qp_g.data(),
             _qp_A.data(),
@@ -295,13 +284,18 @@ void CartesianAdaptiveComplianceController::_updateStiffness() {
             _qp_A_lb.data(),
             _qp_A_ub.data(),
             nWSR
-    ));
-    RCLCPP_INFO(get_node()->get_logger(), "Retrieving solution from QP problem");
+    );
+    qpOASES::int_t qp_solve_status = qpOASES::getSimpleStatus(ret);
     _qp_prob.getPrimalSolution(_qp_x_sol.data());
 
 
     if (qp_solve_status != qpOASES::SUCCESSFUL_RETURN) {
-        RCLCPP_ERROR(get_node()->get_logger(), "QP solver failed");
+        RCLCPP_ERROR(
+                get_node()->get_logger(),
+                "QP solver failed with code %d, init code: %d",
+                qp_solve_status,
+                ret
+        );
         // Maybe set default values
         return;
     }
@@ -319,7 +313,6 @@ KDL::FrameVel CartesianAdaptiveComplianceController::_getEndEffectorFrameVel() c
 
     KDL::FrameVel    frame_vel;
     KDL::JntArrayVel joint_data(q, q_dot);
-    RCLCPP_INFO(this->get_node()->get_logger(), "Updating kinematics");
     _kin_solver->JntToCart(joint_data, frame_vel);
     return frame_vel;
 }

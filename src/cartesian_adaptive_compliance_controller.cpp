@@ -72,6 +72,27 @@ CartesianAdaptiveComplianceController::on_configure(
     // TODO: add custom configuration
 
     // Configure velocity state interface
+
+    // Initialisation of the variables
+    _initializeVariables();
+    RCLCPP_INFO(get_node()->get_logger(), "Adaptive controller initialised");
+
+    return LifecycleNodeInterface::CallbackReturn::SUCCESS;
+}
+
+LifecycleNodeInterface::CallbackReturn
+CartesianAdaptiveComplianceController::on_activate(
+        const rclcpp_lifecycle::State& previous_state
+) {
+    RCLCPP_INFO(get_node()->get_logger(), "Activating adaptive controller");
+    CallbackReturn parent_ret =
+            CartesianComplianceController::on_activate(previous_state);
+    if (parent_ret != CallbackReturn::SUCCESS) {
+        RCLCPP_WARN(get_node()->get_logger(), "Parent class failed to activate");
+        return parent_ret;
+    }
+
+    // TODO: add things that needs to be activated
     std::vector<std::string> joints;
     joints.reserve(Base::m_joint_state_pos_handles.size());
     std::transform(
@@ -86,33 +107,26 @@ CartesianAdaptiveComplianceController::on_configure(
             hardware_interface::HW_IF_VELOCITY,
             _joint_state_vel_handles
     );
+    for (auto& handle : _joint_state_vel_handles) {
+        RCLCPP_INFO(
+                get_node()->get_logger(),
+                "Joint %s velocity interface activated",
+                handle.get().get_name()
+        );
+    }
+
     if (!got_vel_interfaces) {
         RCLCPP_ERROR(get_node()->get_logger(), "Failed to get velocity interfaces");
         return LifecycleNodeInterface::CallbackReturn::ERROR;
     }
+    RCLCPP_INFO(
+            get_node()->get_logger(),
+            "Got %d state interfaces",
+            state_interfaces_.size()
+    );
     _joint_velocities = ctrl::VectorND::Zero(joints.size());
-
     _kin_solver =
             std::make_unique<KDL::ChainFkSolverVel_recursive>(Base::m_robot_chain);
-
-    // Initialisation of the variables
-    _initializeVariables();
-
-    return LifecycleNodeInterface::CallbackReturn::SUCCESS;
-}
-
-LifecycleNodeInterface::CallbackReturn
-CartesianAdaptiveComplianceController::on_activate(
-        const rclcpp_lifecycle::State& previous_state
-) {
-    CallbackReturn parent_ret =
-            CartesianComplianceController::on_activate(previous_state);
-    if (parent_ret != CallbackReturn::SUCCESS) {
-        RCLCPP_WARN(get_node()->get_logger(), "Parent class failed to activate");
-        return parent_ret;
-    }
-
-    // TODO: add things that needs to be activated
     return LifecycleNodeInterface::CallbackReturn::SUCCESS;
 }
 
@@ -145,6 +159,7 @@ controller_interface::return_type CartesianAdaptiveComplianceController::update(
 
     // Synchronize the internal model and the real robot
     Base::m_ik_solver->synchronizeJointPositions(Base::m_joint_state_pos_handles);
+    RCLCPP_INFO(get_node()->get_logger(), "Synchronis");
     _synchroniseJointVelocities();
     _updateStiffness();
 
@@ -162,6 +177,7 @@ controller_interface::return_type CartesianAdaptiveComplianceController::update(
 void CartesianAdaptiveComplianceController::_synchroniseJointVelocities() {
     for (std::size_t i = 0; i < _joint_state_vel_handles.size(); ++i) {
         _joint_velocities(i) = _joint_state_vel_handles[i].get().get_value();
+        RCLCPP_INFO(get_node()->get_logger(), "Joint #%d velocity: %f", i, _joint_velocities(i));
     }
 }
 
@@ -246,7 +262,9 @@ void CartesianAdaptiveComplianceController::_initializeQpProblem() {
 void CartesianAdaptiveComplianceController::_updateStiffness() {
     // TODO: fill values of the qp variables
 
+    RCLCPP_INFO(get_node()->get_logger(), "_updateStiffness() call");
     KDL::FrameVel  frame_vel = _getEndEffectorFrameVel();
+    RCLCPP_INFO(get_node()->get_logger(), "frame velocity");
     ctrl::Vector3D x{// Current position
                      frame_vel.p.p.x(),
                      frame_vel.p.p.y(),
@@ -267,6 +285,7 @@ void CartesianAdaptiveComplianceController::_updateStiffness() {
 
     // Solve the QP problem:
     qpOASES::int_t nWSR            = 10;
+    RCLCPP_INFO(get_node()->get_logger(), "Solving QP problem");
     qpOASES::int_t qp_solve_status = qpOASES::getSimpleStatus(_qp_prob.init(
             _qp_H.data(),
             _qp_g.data(),
@@ -277,6 +296,7 @@ void CartesianAdaptiveComplianceController::_updateStiffness() {
             _qp_A_ub.data(),
             nWSR
     ));
+    RCLCPP_INFO(get_node()->get_logger(), "Retrieving solution from QP problem");
     _qp_prob.getPrimalSolution(_qp_x_sol.data());
 
 
@@ -299,6 +319,7 @@ KDL::FrameVel CartesianAdaptiveComplianceController::_getEndEffectorFrameVel() c
 
     KDL::FrameVel    frame_vel;
     KDL::JntArrayVel joint_data(q, q_dot);
+    RCLCPP_INFO(this->get_node()->get_logger(), "Updating kinematics");
     _kin_solver->JntToCart(joint_data, frame_vel);
     return frame_vel;
 }

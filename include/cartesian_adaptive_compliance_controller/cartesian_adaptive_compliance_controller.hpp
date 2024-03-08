@@ -18,8 +18,8 @@
 #include "rclcpp_lifecycle/node_interfaces/lifecycle_node_interface.hpp"
 
 namespace cartesian_adaptive_compliance_controller {
-using QpMatrix =
-        Eigen::Matrix<qpOASES::real_t, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
+using QpMatrix = Eigen::
+        Matrix<qpOASES::real_t, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
 using QpVector = Eigen::Matrix<qpOASES::real_t, Eigen::Dynamic, 1>;
 
 class CartesianAdaptiveComplianceController

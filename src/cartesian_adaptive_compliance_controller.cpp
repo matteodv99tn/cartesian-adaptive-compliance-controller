@@ -75,7 +75,7 @@ CartesianAdaptiveComplianceController::on_configure(
 
     // Initialisation of the variables
     _initializeVariables();
-    RCLCPP_INFO(get_node()->get_logger(), "Adaptive controller initialised");
+    _initializeQpProblem();
 
     return LifecycleNodeInterface::CallbackReturn::SUCCESS;
 }
@@ -99,7 +99,7 @@ CartesianAdaptiveComplianceController::on_activate(
             Base::m_joint_state_pos_handles.begin(),
             Base::m_joint_state_pos_handles.end(),
             std::back_inserter(joints),
-            [](auto& handle) { return handle.get().get_name(); }
+            [](auto& handle) { return handle.get().get_prefix_name(); }
     );
     const bool got_vel_interfaces = controller_interface::get_ordered_interfaces(
             state_interfaces_,
@@ -240,17 +240,19 @@ void CartesianAdaptiveComplianceController::_initializeVariables() {
 
 void CartesianAdaptiveComplianceController::_initializeQpProblem() {
     // TODO
+    RCLCPP_INFO(get_node()->get_logger(), "Initialising QP solver");
 
     // Initialise solver
-    const int        nv = 3;  // Numbers of variables
-    const int        nc = 5;  // Number of constraints
+    const int nv = 3;  // Numbers of variables
+    const int nc = 5;  // Number of constraints
+
     qpOASES::Options options;
     options.printLevel = qpOASES::PL_NONE;
-
     _qp_prob = qpOASES::QProblem(nv, nc);
     _qp_prob.setOptions(options);
 
     _qp_H     = QpMatrix::Zero(nv, nv);
+    _qp_g     = QpVector::Zero(nv);
     _qp_A     = QpMatrix::Zero(nc, nv);
     _qp_x_lb  = QpVector::Zero(nv);
     _qp_x_ub  = QpVector::Zero(nv);
@@ -262,9 +264,7 @@ void CartesianAdaptiveComplianceController::_initializeQpProblem() {
 void CartesianAdaptiveComplianceController::_updateStiffness() {
     // TODO: fill values of the qp variables
 
-    RCLCPP_INFO(get_node()->get_logger(), "_updateStiffness() call");
     KDL::FrameVel  frame_vel = _getEndEffectorFrameVel();
-    RCLCPP_INFO(get_node()->get_logger(), "frame velocity");
     ctrl::Vector3D x{// Current position
                      frame_vel.p.p.x(),
                      frame_vel.p.p.y(),

@@ -38,13 +38,17 @@ using rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface;
 namespace defaults {
 const std::string         target_velocity_topic = "/target_velocity";
 const std::string         target_wrench_topic   = "/target_wrench";
+const double              sampling_period       = 0.002;
 const double              x0_tank               = 1.0;
-const double              xmin_tank             = 0.1;
-const double              eta_tank              = -1.0;
+const double              x0_tank               = 1.0;
+const double              xmin_tank             = 0.4;
+const double              eta_tank              = -0.1;
 const std::vector<double> Q_weights             = {3200.0, 3200.0, 3200.0};
 const std::vector<double> R_weights             = {0.01, 0.01, 0.01};
 const std::vector<double> F_min                 = {-15.0, -15.0, -15.0};
 const std::vector<double> F_max                 = {15.0, 15.0, 15.0};
+const std::vector<double> K_min                 = {300.0, 300.0, 100.0};
+const std::vector<double> K_max                 = {1000.0, 1000.0, 1000.0};
 }  // namespace defaults
 
 LifecycleNodeInterface::CallbackReturn CartesianAdaptiveComplianceController::on_init(
@@ -58,13 +62,16 @@ LifecycleNodeInterface::CallbackReturn CartesianAdaptiveComplianceController::on
 
     auto_declare<std::string>("target_velocity_topic", defaults::target_velocity_topic);
     auto_declare<std::string>("target_wrench_topic", defaults::target_wrench_topic);
+    auto_declare<double>("sampling_period", defaults::sampling_period);
     auto_declare<double>("tank.initial_state", defaults::x0_tank);
     auto_declare<double>("tank.minimum_energy", defaults::xmin_tank);
     auto_declare<double>("tank.eta", defaults::eta_tank);
-    auto_declare<std::vector<double>>("Q_weights", defaults::Q_weights);
-    auto_declare<std::vector<double>>("R_weights", defaults::R_weights);
-    auto_declare<std::vector<double>>("F_min", defaults::F_min);
-    auto_declare<std::vector<double>>("F_max", defaults::F_max);
+    auto_declare<std::vector<double>>("Qp.Q_weights", defaults::Q_weights);
+    auto_declare<std::vector<double>>("Qp.R_weights", defaults::R_weights);
+    auto_declare<std::vector<double>>("Qp.F_min", defaults::F_min);
+    auto_declare<std::vector<double>>("Qp.F_max", defaults::F_max);
+    auto_declare<std::vector<double>>("Qp.K_min", defaults::K_min);
+    auto_declare<std::vector<double>>("Qp.K_max", defaults::K_max);
     return LifecycleNodeInterface::CallbackReturn::SUCCESS;
 }
 
@@ -153,6 +160,8 @@ CartesianAdaptiveComplianceController::on_activate(
     _joint_velocities = ctrl::VectorND::Zero(joints.size());
     _kin_solver
             = std::make_unique<KDL::ChainFkSolverVel_recursive>(Base::m_robot_chain);
+
+    _dt = get_node()->get_parameter("sampling_period").as_double();
     return LifecycleNodeInterface::CallbackReturn::SUCCESS;
 }
 
@@ -211,12 +220,12 @@ void CartesianAdaptiveComplianceController::_initializeVariables() {
     _x_tank = get_node()->get_parameter("tank.initial_state").as_double();
 
     // Minimum and maximum stiffness
-    _Kmin = ctrl::Vector3D(
-            {get_node()->get_parameter("stiffness.trans_x").as_double(),
-             get_node()->get_parameter("stiffness.trans_y").as_double(),
-             get_node()->get_parameter("stiffness.trans_z").as_double()}
-    );
-    _Kmax = ctrl::Vector3D({1000.0, 1000.0, 1000.0});
+    const std::vector<double> Kmin_vals
+            = get_node()->get_parameter("Qp.K_min").as_double_array();
+    const std::vector<double> Kmax_vals
+            = get_node()->get_parameter("Qp.K_max").as_double_array();
+    _Kmin = ctrl::Vector3D(Kmin_vals.data());
+    _Kmax = ctrl::Vector3D(Kmax_vals.data());
     _K    = _Kmin.asDiagonal();
     _updateDamping();
 
@@ -329,7 +338,6 @@ void CartesianAdaptiveComplianceController::_updateStiffness() {
     const double Tmin  = get_node()->get_parameter("tank.minimum_energy").as_double();
     const double sigma = T >= 1.0 ? 1 : 0;
     const double eta   = get_node()->get_parameter("tank.eta").as_double();
-    const double dt    = 1 / get_node()->get_parameter("update_rate").as_int();
 
     // const double k1 = _sigma * xd_tilde.transpose() * _D * xd_tilde -
     // x_tilde.transpose() * _Kmin.asDiagonal() * xd_tilde;
@@ -337,7 +345,7 @@ void CartesianAdaptiveComplianceController::_updateStiffness() {
     const double k_tmp2 = x_tilde.transpose() * _Kmin.asDiagonal() * xd_tilde;
     const double k_tmp3 = k_tmp1 - k_tmp2;
 
-    const double k1 = k_tmp3 + (T - Tmin) / dt;
+    const double k1 = k_tmp3 + (T - Tmin) / _dt;
     const double k2 = k_tmp3 - eta;
 
 
@@ -372,12 +380,16 @@ void CartesianAdaptiveComplianceController::_updateStiffness() {
 
 
     if (qp_solve_status != qpOASES::SUCCESSFUL_RETURN) {
-        RCLCPP_ERROR(
-                get_node()->get_logger(),
-                "QP solver failed with code %d, init code: %d",
-                qp_solve_status,
-                ret
-        );
+        if (qp_solve_status == -2) {
+            RCLCPP_ERROR(get_node()->get_logger(), "Unfeasible QP (err. code %d)", ret);
+        } else {
+            RCLCPP_ERROR(
+                    get_node()->get_logger(),
+                    "QP solver failed with code %d, init code: %d",
+                    qp_solve_status,
+                    ret
+            );
+        }
         // Maybe set default values
         return;
     }
@@ -388,20 +400,15 @@ void CartesianAdaptiveComplianceController::_updateStiffness() {
     m_stiffness.topLeftCorner<3, 3>() = _K;
 
     // Integrate energy tank
-    ctrl::Matrix3D Kmin = _Kmin.asDiagonal();
-    ctrl::Vector3D w        = -(_K - Kmin) * x_tilde;
-    double         dx_tank = sigma / T * xd_tilde.transpose() * _D * xd_tilde;
+    const ctrl::Matrix3D Kmin    = _Kmin.asDiagonal();
+    const ctrl::Vector3D w       = -(_K - Kmin) * x_tilde;
+    double               dx_tank = sigma / T * xd_tilde.transpose() * _D * xd_tilde;
     dx_tank += -1 / T * w.transpose() * xd_tilde;
+    _x_tank += dx_tank * _dt;
 }
 
 void CartesianAdaptiveComplianceController::_updateDamping() {
-    RCLCPP_WARN_THROTTLE(
-            get_node()->get_logger(),
-            *get_node()->get_clock(),
-            100000,
-            "Damping matrix is not updated in the adaptive compliance controller"
-    );
-    _D = ctrl::Matrix3D::Zero();
+    _D = 2.0 * 0.707 * _K.diagonal().cwiseSqrt().asDiagonal();
 }
 
 KDL::FrameVel CartesianAdaptiveComplianceController::_getEndEffectorFrameVel() const {

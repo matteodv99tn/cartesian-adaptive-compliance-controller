@@ -135,6 +135,7 @@ private:
     //   |_|\__,_|_| |_|_|\_\
     //
     double _x_tank;
+    double _dt;
 
     ctrl::Matrix3D _D;            // Damping matrix
     ctrl::Matrix3D _K;            // Stiffness matrix

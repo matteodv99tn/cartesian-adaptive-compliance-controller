@@ -22,9 +22,12 @@
 #include "rclcpp_lifecycle/node_interfaces/lifecycle_node_interface.hpp"
 
 namespace cartesian_adaptive_compliance_controller {
-using QpMatrix = Eigen::
-        Matrix<qpOASES::real_t, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
-using QpVector = Eigen::Matrix<qpOASES::real_t, Eigen::Dynamic, 1>;
+
+template <int ROWS = Eigen::Dynamic, int COLS = Eigen::Dynamic>
+using QpMatrix = Eigen::Matrix<qpOASES::real_t, ROWS, COLS, Eigen::RowMajor>;
+
+template <int SIZE = Eigen::Dynamic>
+using QpVector = Eigen::Matrix<qpOASES::real_t, SIZE, 1>;
 
 class CartesianAdaptiveComplianceController
         : public cartesian_compliance_controller::CartesianComplianceController {
@@ -117,13 +120,16 @@ private:
      *          lb <= x <= ub
      *
      */
+    static constexpr int nv = 3;  // number of variables of the qp problem
+    static constexpr int nc = 5;  // number of constraings of the qp problem
+
     qpOASES::QProblem _qp_prob;
-    QpMatrix          _qp_H;
-    QpVector          _qp_g;
-    QpMatrix          _qp_A;
-    QpVector          _qp_A_lb, _qp_A_ub;
-    QpVector          _qp_x_lb, _qp_x_ub;
-    QpVector          _qp_x_sol;
+    QpMatrix<nv, nv>  _qp_H;
+    QpVector<nv>      _qp_g;
+    QpMatrix<nc, nv>  _qp_A;
+    QpVector<nc>      _qp_A_lb, _qp_A_ub;
+    QpVector<nv>      _qp_x_lb, _qp_x_ub;
+    QpVector<nv>      _qp_x_sol;
 
     ctrl::Matrix3D _Q;
     ctrl::Matrix3D _R;

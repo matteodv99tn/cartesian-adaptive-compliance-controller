@@ -40,7 +40,6 @@ const std::string         target_velocity_topic = "/target_velocity";
 const std::string         target_wrench_topic   = "/target_wrench";
 const double              sampling_period       = 0.002;
 const double              x0_tank               = 1.0;
-const double              x0_tank               = 1.0;
 const double              xmin_tank             = 0.4;
 const double              eta_tank              = -0.1;
 const std::vector<double> Q_weights             = {3200.0, 3200.0, 3200.0};
@@ -281,25 +280,19 @@ void CartesianAdaptiveComplianceController::_initializeVariables() {
 }
 
 void CartesianAdaptiveComplianceController::_initializeQpProblem() {
-    // TODO
-
-    // Initialise solver
-    const int nv = 3;  // Numbers of variables
-    const int nc = 5;  // Number of constraints
-
     qpOASES::Options options;
     options.printLevel = qpOASES::PL_NONE;
     _qp_prob           = qpOASES::QProblem(nv, nc);
     _qp_prob.setOptions(options);
 
-    _qp_H     = QpMatrix::Zero(nv, nv);
-    _qp_g     = QpVector::Zero(nv);
-    _qp_A     = QpMatrix::Zero(nc, nv);
-    _qp_x_lb  = QpVector::Zero(nv);
-    _qp_x_ub  = QpVector::Zero(nv);
-    _qp_A_lb  = QpVector::Zero(nc);
-    _qp_A_ub  = QpVector::Zero(nc);
-    _qp_x_sol = QpVector::Zero(nv);
+    _qp_H     = decltype(_qp_H)::Zero();
+    _qp_g     = decltype(_qp_g)::Zero();
+    _qp_A     = decltype(_qp_A)::Zero();
+    _qp_A_lb  = decltype(_qp_A_lb)::Zero();
+    _qp_A_ub  = decltype(_qp_A_ub)::Zero();
+    _qp_x_lb  = decltype(_qp_x_lb)::Zero();
+    _qp_x_ub  = decltype(_qp_x_ub)::Zero();
+    _qp_x_sol = decltype(_qp_x_sol)::Zero();
 }
 
 void CartesianAdaptiveComplianceController::_updateStiffness() {

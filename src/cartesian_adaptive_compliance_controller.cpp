@@ -1,5 +1,3 @@
-// Empty
-
 /**
  * Changes are in the functions:
  * - on_configure(): this changes might not be relevant to me
@@ -19,9 +17,12 @@
 #include <memory>
 #include <vector>
 
+#include <geometry_msgs/msg/detail/wrench_stamped__struct.hpp>
+
 #include "cartesian_controller_base/Utility.h"
 #include "controller_interface/controller_interface_base.hpp"
 #include "controller_interface/helpers.hpp"
+#include "geometry_msgs/msg/twist_stamped.hpp"
 #include "hardware_interface/types/hardware_interface_type_values.hpp"
 #include "kdl/chainfksolvervel_recursive.hpp"
 #include "kdl/jntarray.hpp"
@@ -35,11 +36,15 @@ using cartesian_adaptive_compliance_controller::CartesianAdaptiveComplianceContr
 using rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface;
 
 namespace defaults {
-const double              x0_tank   = 1.0;
-const std::vector<double> Q_weights = {3200.0, 3200.0, 3200.0};
-const std::vector<double> R_weights = {0.01, 0.01, 0.01};
-const std::vector<double> F_min     = {-15.0, -15.0, -15.0};
-const std::vector<double> F_max     = {15.0, 15.0, 15.0};
+const std::string         target_velocity_topic = "/target_velocity";
+const std::string         target_wrench_topic   = "/target_wrench";
+const double              x0_tank               = 1.0;
+const double              xmin_tank             = 0.1;
+const double              eta_tank              = -1.0;
+const std::vector<double> Q_weights             = {3200.0, 3200.0, 3200.0};
+const std::vector<double> R_weights             = {0.01, 0.01, 0.01};
+const std::vector<double> F_min                 = {-15.0, -15.0, -15.0};
+const std::vector<double> F_max                 = {15.0, 15.0, 15.0};
 }  // namespace defaults
 
 LifecycleNodeInterface::CallbackReturn CartesianAdaptiveComplianceController::on_init(
@@ -51,7 +56,11 @@ LifecycleNodeInterface::CallbackReturn CartesianAdaptiveComplianceController::on
         return parent_ret;
     }
 
+    auto_declare<std::string>("target_velocity_topic", defaults::target_velocity_topic);
+    auto_declare<std::string>("target_wrench_topic", defaults::target_wrench_topic);
     auto_declare<double>("tank.initial_state", defaults::x0_tank);
+    auto_declare<double>("tank.minimum_energy", defaults::xmin_tank);
+    auto_declare<double>("tank.eta", defaults::eta_tank);
     auto_declare<std::vector<double>>("Q_weights", defaults::Q_weights);
     auto_declare<std::vector<double>>("R_weights", defaults::R_weights);
     auto_declare<std::vector<double>>("F_min", defaults::F_min);
@@ -92,7 +101,35 @@ CartesianAdaptiveComplianceController::on_activate(
         return parent_ret;
     }
 
-    // TODO: add things that needs to be activated
+    // Create subscription for desired velocity
+    _des_vel = ctrl::Vector3D::Zero();
+    auto on_target_velocity_received =
+            [this](geometry_msgs::msg::TwistStamped::SharedPtr msg) {
+                this->_des_vel = ctrl::Vector3D(
+                        {msg->twist.linear.x, msg->twist.linear.y, msg->twist.linear.z}
+                );
+            };
+    _twist_sub = get_node()->create_subscription<geometry_msgs::msg::TwistStamped>(
+            get_node()->get_parameter("target_velocity_topic").as_string(),
+            10,
+            on_target_velocity_received
+    );
+
+    // Create subscription for desired wrench
+    _des_wrench = ctrl::Vector3D::Zero();
+    auto on_target_wrench_received =
+            [this](geometry_msgs::msg::WrenchStamped::SharedPtr msg) {
+                this->_des_wrench = ctrl::Vector3D(
+                        {msg->wrench.force.x, msg->wrench.force.y, msg->wrench.force.z}
+                );
+            };
+    _wrench_sub = get_node()->create_subscription<geometry_msgs::msg::WrenchStamped>(
+            get_node()->get_parameter("target_wrench_topic").as_string(),
+            10,
+            on_target_wrench_received
+    );
+
+    // Configure velocity state interface
     std::vector<std::string> joints;
     joints.reserve(Base::m_joint_state_pos_handles.size());
     std::transform(
@@ -149,16 +186,13 @@ controller_interface::return_type CartesianAdaptiveComplianceController::update(
     // Synchronize the internal model and the real robot
     Base::m_ik_solver->synchronizeJointPositions(Base::m_joint_state_pos_handles);
     _synchroniseJointVelocities();
-    static bool is_first = true;
-    if (is_first) {
-        _updateStiffness();
-        is_first = false;
-    }
+    _updateStiffness();
 
     // --- Same control loop of the cartesian compliance controller
     for (int i = 0; i < Base::m_iterations; ++i) {
         auto           internal_period = rclcpp::Duration::from_seconds(0.02);
-        ctrl::Vector6D error           = computeComplianceError();
+        ctrl::Vector6D error           = cartesian_compliance_controller::
+                CartesianComplianceController::computeComplianceError();
         Base::computeJointControlCmds(error, internal_period);
     }
     Base::writeJointControlCmds();
@@ -177,16 +211,24 @@ void CartesianAdaptiveComplianceController::_initializeVariables() {
     _x_tank = get_node()->get_parameter("tank.initial_state").as_double();
 
     // Minimum and maximum stiffness
-    _Kmin.diagonal() = ctrl::Vector6D(
+    _Kmin = ctrl::Vector3D(
             {get_node()->get_parameter("stiffness.trans_x").as_double(),
              get_node()->get_parameter("stiffness.trans_y").as_double(),
-             get_node()->get_parameter("stiffness.trans_z").as_double(),
-             get_node()->get_parameter("stiffness.rot_x").as_double(),
-             get_node()->get_parameter("stiffness.rot_y").as_double(),
-             get_node()->get_parameter("stiffness.rot_z").as_double()}
+             get_node()->get_parameter("stiffness.trans_z").as_double()}
     );
-    _Kmax.diagonal() = ctrl::Vector6D({1000.0, 1000.0, 1000.0, 100.0, 100.0, 100.0});
-    m_stiffness      = _Kmin;
+    _Kmax = ctrl::Vector3D({1000.0, 1000.0, 1000.0});
+    _K    = _Kmin.asDiagonal();
+    _updateDamping();
+
+    m_stiffness = ctrl::Vector6D(
+                          {get_node()->get_parameter("stiffness.trans_x").as_double(),
+                           get_node()->get_parameter("stiffness.trans_y").as_double(),
+                           get_node()->get_parameter("stiffness.trans_z").as_double(),
+                           get_node()->get_parameter("stiffness.rot_x").as_double(),
+                           get_node()->get_parameter("stiffness.rot_y").as_double(),
+                           get_node()->get_parameter("stiffness.rot_z").as_double()}
+    )
+                          .asDiagonal();
 
     // Weight matrices for the QP problem
     auto Q_weights = get_node()->get_parameter("Q_weights").as_double_array();
@@ -254,24 +296,64 @@ void CartesianAdaptiveComplianceController::_initializeQpProblem() {
 void CartesianAdaptiveComplianceController::_updateStiffness() {
     // TODO: fill values of the qp variables
 
-    KDL::FrameVel  frame_vel = _getEndEffectorFrameVel();
-    ctrl::Vector3D x{// Current position
-                     frame_vel.p.p.x(),
-                     frame_vel.p.p.y(),
-                     frame_vel.p.p.z()};
+    // Variable preparation
+    KDL::FrameVel        frame_vel = _getEndEffectorFrameVel();
+    const ctrl::Vector3D x{// Current position
+                           frame_vel.p.p.x(),
+                           frame_vel.p.p.y(),
+                           frame_vel.p.p.z()};
 
-    ctrl::Vector3D xd{// Current velocity
-                      frame_vel.p.v.x(),
-                      frame_vel.p.v.y(),
-                      frame_vel.p.v.z()};
+    const ctrl::Vector3D xd{// Current velocity
+                            frame_vel.p.v.x(),
+                            frame_vel.p.v.y(),
+                            frame_vel.p.v.z()};
 
-    ctrl::Vector3D x_des{// Desired position
-                         MotionBase::m_target_frame.p.x(),
-                         MotionBase::m_target_frame.p.y(),
-                         MotionBase::m_target_frame.p.z()};
+    const ctrl::Vector3D x_des{// Desired position
+                               MotionBase::m_target_frame.p.x(),
+                               MotionBase::m_target_frame.p.y(),
+                               MotionBase::m_target_frame.p.z()};
 
-    ctrl::Vector3D x_tilde  = x - x_des;
-    ctrl::Vector3D xd_tilde = -xd;
+    const ctrl::Vector3D x_tilde  = x_des - x;      // pos tracking error
+    const ctrl::Vector3D xd_tilde = _des_vel - xd;  // vel tracking error
+
+    const ctrl::Matrix3D X_tilde
+            = x_tilde.asDiagonal();  // pos tracking error diag matrix
+    const ctrl::Matrix3D Xd_tilde = xd_tilde.asDiagonal();
+
+    const ctrl::Vector3D d = _D * xd_tilde;
+    const ctrl::Vector3D f = d - _des_wrench;
+
+    const ctrl::Vector3D A_bot_row = -Xd_tilde * x_tilde;
+
+    const double T     = _tankEnergy();
+    const double Tmin  = get_node()->get_parameter("tank.minimum_energy").as_double();
+    const double sigma = T >= 1.0 ? 1 : 0;
+    const double eta   = get_node()->get_parameter("tank.eta").as_double();
+    const double dt    = 1 / get_node()->get_parameter("update_rate").as_int();
+
+    // const double k1 = _sigma * xd_tilde.transpose() * _D * xd_tilde -
+    // x_tilde.transpose() * _Kmin.asDiagonal() * xd_tilde;
+    const double k_tmp1 = sigma * xd_tilde.transpose() * _D * xd_tilde;
+    const double k_tmp2 = x_tilde.transpose() * _Kmin.asDiagonal() * xd_tilde;
+    const double k_tmp3 = k_tmp1 - k_tmp2;
+
+    const double k1 = k_tmp3 + (T - Tmin) / dt;
+    const double k2 = k_tmp3 - eta;
+
+
+    // Fill the QP problem
+    _qp_H                       = X_tilde.transpose() * _Q * X_tilde + _R;
+    _qp_g                       = X_tilde.transpose() * _Q * f - _R * _Kmin;
+    _qp_A.topLeftCorner<3, 3>() = X_tilde;
+    _qp_A.row(3)                = A_bot_row;
+    _qp_A.row(4)                = A_bot_row;
+    _qp_x_lb                    = _Kmin;
+    _qp_x_ub                    = _Kmax;
+    _qp_A_lb.topRows<3>()       = _F_min - d;
+    _qp_A_ub.topRows<3>()       = _F_max - d;
+    _qp_A_lb.bottomRows<2>()    = -1e9 * Eigen::Vector2d::Ones();
+    _qp_A_ub.bottomRows<2>()    = Eigen::Vector2d({k1, k2});
+
 
     // Solve the QP problem:
     qpOASES::int_t       nWSR = 10;
@@ -300,7 +382,26 @@ void CartesianAdaptiveComplianceController::_updateStiffness() {
         return;
     }
 
-    // TODO: write back results to update stiffness
+    // Update the stiffness matrix
+    _K = _qp_x_sol.asDiagonal();
+    _updateDamping();
+    m_stiffness.topLeftCorner<3, 3>() = _K;
+
+    // Integrate energy tank
+    ctrl::Matrix3D Kmin = _Kmin.asDiagonal();
+    ctrl::Vector3D w        = -(_K - Kmin) * x_tilde;
+    double         dx_tank = sigma / T * xd_tilde.transpose() * _D * xd_tilde;
+    dx_tank += -1 / T * w.transpose() * xd_tilde;
+}
+
+void CartesianAdaptiveComplianceController::_updateDamping() {
+    RCLCPP_WARN_THROTTLE(
+            get_node()->get_logger(),
+            *get_node()->get_clock(),
+            100000,
+            "Damping matrix is not updated in the adaptive compliance controller"
+    );
+    _D = ctrl::Matrix3D::Zero();
 }
 
 KDL::FrameVel CartesianAdaptiveComplianceController::_getEndEffectorFrameVel() const {

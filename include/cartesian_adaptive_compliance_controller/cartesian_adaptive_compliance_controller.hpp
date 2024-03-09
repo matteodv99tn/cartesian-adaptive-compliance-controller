@@ -7,8 +7,12 @@
 #include <memory>
 #include <vector>
 
+#include <geometry_msgs/msg/detail/wrench_stamped__struct.hpp>
+
 #include "cartesian_compliance_controller/cartesian_compliance_controller.h"
 #include "cartesian_controller_base/Utility.h"
+#include "geometry_msgs/msg/twist_stamped.hpp"
+#include "geometry_msgs/msg/wrench_stamped.hpp"
 #include "hardware_interface/loaned_state_interface.hpp"
 #include "kdl/chainfksolvervel_recursive.hpp"
 #include "kdl/framevel.hpp"
@@ -87,6 +91,12 @@ private:
     void _updateStiffness();
 
     /**
+     * @brief updates the damping matrix according to the current stiffness
+     *
+     */
+    void _updateDamping();
+
+    /**
      * @brief Returns the end-effector frame velocity
      *
      */
@@ -126,11 +136,18 @@ private:
     //
     double _x_tank;
 
-    ctrl::Matrix6D                                   _Kmin, _Kmax;
-    ctrl::Vector3D                                   _F_min, _F_max;
+    ctrl::Matrix3D _D;            // Damping matrix
+    ctrl::Matrix3D _K;            // Stiffness matrix
+    ctrl::Vector3D _Kmin, _Kmax;  // min/max diag. elems
+    ctrl::Vector3D _F_min, _F_max;
     std::unique_ptr<KDL::ChainFkSolverVel_recursive> _kin_solver;
 
     double inline _tankEnergy() const { return 0.5 * _x_tank * _x_tank; };
+
+    rclcpp::Subscription<geometry_msgs::msg::TwistStamped>::SharedPtr  _twist_sub;
+    rclcpp::Subscription<geometry_msgs::msg::WrenchStamped>::SharedPtr _wrench_sub;
+    ctrl::Vector3D                                                     _des_vel;
+    ctrl::Vector3D                                                     _des_wrench;
 };
 
 }  // namespace cartesian_adaptive_compliance_controller

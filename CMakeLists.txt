@@ -10,15 +10,6 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
 endif()
 
-include(FetchContent)
-FetchContent_Declare(
-    range-v3
-    GIT_REPOSITORY https://github.com/ericniebler/range-v3.git
-    GIT_TAG 0.12.0
-    )
-FetchContent_MakeAvailable(range-v3)
-
-
 find_package(Eigen3 3.3 REQUIRED NO_MODULE)
 add_definitions(-DEIGEN_MPL2_ONLY)
 find_package(ament_cmake REQUIRED)
@@ -77,13 +68,6 @@ ament_target_dependencies(${PROJECT_NAME}
         ${THIS_PACKAGE_INCLUDE_DEPENDS}
 )
 
-add_executable(dmp src/dmp.cpp src/dmp_main.cpp)
-target_link_libraries(dmp Eigen3::Eigen range-v3)
-target_include_directories(dmp
-    PUBLIC
-    ${CMAKE_CURRENT_LIST_DIR}/include
-)
-
 # Prevent pluginlib from using boost
 target_compile_definitions(${PROJECT_NAME} PUBLIC "PLUGINLIB__DISABLE_BOOST_FUNCTIONS")
 
@@ -112,10 +96,6 @@ install(
   ARCHIVE DESTINATION lib
   RUNTIME DESTINATION bin
   #INCLUDES DESTINATION include
-)
-install(
-  TARGETS dmp
-  DESTINATION lib/${PROJECT_NAME}
 )
 
 # Note: For the target based workflow, they seem to be superfluous.

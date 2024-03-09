@@ -61,28 +61,28 @@ cartesian_adaptive_compliance_controller:
 
     # QP parameters
     Qp:
-        Fmin:  # Force lower bound
+        F_min:  # Force lower bound
             - -15.0
             - -15.0
             - -15.0
             - -1.5
             - -1.5
             - -1.5
-        Fmax:  # Force upper bound
+        F_max:  # Force upper bound
             - 15.0
             - 15.0
             - 15.0
             - 1.5
             - 1.5
             - 1.5
-        Kmin: # Minimum stiffness (diagonal)
+        K_min: # Minimum stiffness (diagonal)
             - 300.0
             - 300.0
             - 100.0
             - 30.0
             - 30.0
             - 10.0
-        Kmax: # Maximum stiffness (diagonal)
+        K_max: # Maximum stiffness (diagonal)
             - 1000.0
             - 1000.0
             - 1000.0

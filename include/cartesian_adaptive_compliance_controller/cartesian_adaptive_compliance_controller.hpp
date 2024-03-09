@@ -57,6 +57,8 @@ public:
     controller_interface::return_type update() override;
 #endif
     // clang-format on
+
+    void logParameters() const;
 private:
     std::vector<std::reference_wrapper<hardware_interface::LoanedStateInterface>>
                    _joint_state_vel_handles;

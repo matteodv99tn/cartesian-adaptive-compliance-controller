@@ -183,6 +183,7 @@ CartesianAdaptiveComplianceController::on_activate(
             = std::make_unique<KDL::ChainFkSolverVel_recursive>(Base::m_robot_chain);
 
     _dt = get_node()->get_parameter("sampling_period").as_double();
+    logParameters();
     return LifecycleNodeInterface::CallbackReturn::SUCCESS;
 }
 
@@ -230,6 +231,25 @@ controller_interface::return_type CartesianAdaptiveComplianceController::update(
     return controller_interface::return_type::OK;
 }
 
+void CartesianAdaptiveComplianceController::logParameters() const {
+    const auto logger = get_node()->get_logger();
+    RCLCPP_INFO(logger, "Sampling period: %f", _dt);
+    RCLCPP_INFO(logger, "Tank state (energy): %f (%f)", _x_tank, _tankEnergy());
+    RCLCPP_INFO(logger, "Minimum stiffness: %f, %f, %f, %f, %f, %f",
+                _Kmin(0), _Kmin(1), _Kmin(2), _Kmin(3), _Kmin(4), _Kmin(5));
+    RCLCPP_INFO(logger, "Maximum stiffness: %f, %f, %f, %f, %f, %f",
+                _Kmax(0), _Kmax(1), _Kmax(2), _Kmax(3), _Kmax(4), _Kmax(5));
+    RCLCPP_INFO(logger, "Minimum wrench: %f, %f, %f, %f, %f, %f",
+                _F_min(0), _F_min(1), _F_min(2), _F_min(3), _F_min(4), _F_min(5));
+    RCLCPP_INFO(logger, "Maximum wrench: %f, %f, %f, %f, %f, %f",
+                _F_max(0), _F_max(1), _F_max(2), _F_max(3), _F_max(4), _F_max(5));
+    RCLCPP_INFO(logger, "Q weights: %f, %f, %f, %f, %f, %f",
+                _Q(0, 0), _Q(1, 1), _Q(2, 2), _Q(3, 3), _Q(4, 4), _Q(5, 5));
+    RCLCPP_INFO(logger, "R weights: %f, %f, %f, %f, %f, %f",
+            _R(0, 0), _R(1, 1), _R(2, 2), _R(3, 3), _R(4, 4), _R(5, 5));
+
+}
+
 void CartesianAdaptiveComplianceController::_synchroniseJointVelocities() {
     for (std::size_t i = 0; i < _joint_state_vel_handles.size(); ++i) {
         _joint_velocities(i) = _joint_state_vel_handles[i].get().get_value();
@@ -243,8 +263,10 @@ void CartesianAdaptiveComplianceController::_initializeVariables() {
     // Minimum and maximum stiffness
     std::vector<double> Kmin_vals
             = get_node()->get_parameter("Qp.K_min").as_double_array();
+    std::cout << "Loaded Kmin" << std::endl;
     std::vector<double> Kmax_vals
             = get_node()->get_parameter("Qp.K_max").as_double_array();
+    std::cout << "Loaded Kmax" << std::endl;
     if (Kmin_vals.size() != 6) {
         RCLCPP_WARN(
                 get_node()->get_logger(),
@@ -266,8 +288,10 @@ void CartesianAdaptiveComplianceController::_initializeVariables() {
     m_stiffness = _Kmin.asDiagonal();
 
     // Weight matrices for the QP problem
-    auto Q_weights = get_node()->get_parameter("Q_weights").as_double_array();
-    auto R_weights = get_node()->get_parameter("R_weights").as_double_array();
+    auto Q_weights = get_node()->get_parameter("Qp.Q_weights").as_double_array();
+    std::cout << "Loaded Q weights" << std::endl;
+    auto R_weights = get_node()->get_parameter("Qp.R_weights").as_double_array();
+    std::cout << "Loaded R weights" << std::endl;
     if (Q_weights.size() != 6) {
         RCLCPP_WARN(
                 get_node()->get_logger(),
@@ -286,19 +310,23 @@ void CartesianAdaptiveComplianceController::_initializeVariables() {
     _R = ctrl::Vector6D(R_weights.data()).asDiagonal();
 
     // Force limits
-    auto F_min = get_node()->get_parameter("F_min").as_double_array();
-    auto F_max = get_node()->get_parameter("F_max").as_double_array();
+    auto F_min = get_node()->get_parameter("Qp.F_min").as_double_array();
+    std::cout << "Loaded F_min" << std::endl;
+    auto F_max = get_node()->get_parameter("Qp.F_max").as_double_array();
+    std::cout << "Loaded F_max" << std::endl;
     if (F_min.size() != 6) {
         RCLCPP_WARN(
                 get_node()->get_logger(),
-                "F_min must have 3 elements, switching to default values"
+                "F_min must have 6 elements, switching to default values (got %d)",
+                F_min.size()
         );
         F_min = defaults::F_min;
     }
     if (F_max.size() != 6) {
         RCLCPP_WARN(
                 get_node()->get_logger(),
-                "F_max must have 3 elements, switching to default values"
+                "F_max must have 6 elements, switching to default values (got %d)",
+                F_max.size()
         );
         F_max = defaults::F_max;
     }

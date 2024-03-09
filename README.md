@@ -17,6 +17,8 @@ controller_manager:
 
 cartesian_adaptive_compliance_controller:
   ros__parameters:
+
+    # Cartesian controller parameters
     end_effector_link: "tool0"
     robot_base_link: "base_link"
     ft_sensor_ref_link: "sensor_link"
@@ -32,14 +34,6 @@ cartesian_adaptive_compliance_controller:
     command_interfaces:
       - position
 
-    stiffness:  # minimum stiff. values w.r.t. compliance_ref_link
-        trans_x: 500
-        trans_y: 500
-        trans_z: 500
-        rot_x: 20
-        rot_y: 20
-        rot_z: 20
-
     solver:
         error_scale: 0.5
         iterations: 1
@@ -52,32 +46,63 @@ cartesian_adaptive_compliance_controller:
         rot_y: {p: 1.5}
         rot_z: {p: 1.5}
 
-    # Parameters of the QP and adaptive controller
+    # Topics
+    target_velocity_topic: "/target_velocity"
+    target_wrench_topic: "/target_wrench"
+
+    # Sampling period of the interface
+    sampling_period: 0.002
+
+    # Tank parameters
     tank:
         initial_state: 1.0
+        minimum_energy: 0.4
+        eta: -0.1
 
-    qp:
-        Fmin:
-
-    Q_weights:
-        - 3200.0
-        - 3200.0
-        - 3200.0
-
-    R_weights:
-        - 0.01
-        - 0.01
-        - 0.01
-
-    F_min:
-        - -15.0
-        - -15.0
-        - -15.0
-
-    F_max:
-        - 15.0
-        - 15.0
-        - 15.0
+    # QP parameters
+    Qp:
+        Fmin:  # Force lower bound
+            - -15.0
+            - -15.0
+            - -15.0
+            - -1.5
+            - -1.5
+            - -1.5
+        Fmax:  # Force upper bound
+            - 15.0
+            - 15.0
+            - 15.0
+            - 1.5
+            - 1.5
+            - 1.5
+        Kmin: # Minimum stiffness (diagonal)
+            - 300.0
+            - 300.0
+            - 100.0
+            - 30.0
+            - 30.0
+            - 10.0
+        Kmax: # Maximum stiffness (diagonal)
+            - 1000.0
+            - 1000.0
+            - 1000.0
+            - 100.0
+            - 100.0
+            - 100.0
+        Q_weights: # Q weights
+            - 3200.0
+            - 3200.0
+            - 3200.0
+            - 3200.0
+            - 3200.0
+            - 3200.0
+        R_weights: # R weights
+            - 0.01
+            - 0.01
+            - 0.01
+            - 0.01
+            - 0.01
+            - 0.01
 
 # More controller specifications here
 # ...

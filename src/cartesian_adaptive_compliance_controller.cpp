@@ -11,6 +11,7 @@
 
 #include "cartesian_adaptive_compliance_controller/cartesian_adaptive_compliance_controller.hpp"
 
+#include <Eigen/src/Geometry/Quaternion.h>
 #include <algorithm>
 #include <cstdio>
 #include <iostream>
@@ -42,13 +43,24 @@ const double              sampling_period       = 0.002;
 const double              x0_tank               = 1.0;
 const double              xmin_tank             = 0.4;
 const double              eta_tank              = -0.1;
-const std::vector<double> Q_weights             = {3200.0, 3200.0, 3200.0};
-const std::vector<double> R_weights             = {0.01, 0.01, 0.01};
-const std::vector<double> F_min                 = {-15.0, -15.0, -15.0};
-const std::vector<double> F_max                 = {15.0, 15.0, 15.0};
-const std::vector<double> K_min                 = {300.0, 300.0, 100.0};
-const std::vector<double> K_max                 = {1000.0, 1000.0, 1000.0};
+const std::vector<double> Q_weights = {3200.0, 3200.0, 3200.0, 3200.0, 3200.0, 3200.0};
+const std::vector<double> R_weights = {0.01, 0.01, 0.01, 0.01, 0.01, 0.01};
+const std::vector<double> F_min     = {-15.0, -15.0, -15.0, -1.5, -1.5, -1.5};
+const std::vector<double> F_max     = {15.0, 15.0, 15.0, 1.5, 1.5, 1.5};
+const std::vector<double> K_min     = {300.0, 300.0, 100.0, 30.0, 30.0, 30.0};
+const std::vector<double> K_max     = {1000.0, 1000.0, 1000.0, 100.0, 100.0, 100.0};
 }  // namespace defaults
+
+const Eigen::Vector3d quat_logarithmic_map(const Eigen::Quaterniond& q) {
+    const Eigen::Quaterniond q_normalized = q.normalized();
+    const Eigen::Vector3d u = q_normalized.vec();
+    const double nu = q_normalized.w();
+
+    if(u.norm() < 1e-9)
+        return Eigen::Vector3d::Zero();
+    else
+        return std::acos(nu) * u.normalized();
+}
 
 LifecycleNodeInterface::CallbackReturn CartesianAdaptiveComplianceController::on_init(
 ) {
@@ -108,13 +120,18 @@ CartesianAdaptiveComplianceController::on_activate(
     }
 
     // Create subscription for desired velocity
-    _des_vel = ctrl::Vector3D::Zero();
-    auto on_target_velocity_received =
-            [this](geometry_msgs::msg::TwistStamped::SharedPtr msg) {
-                this->_des_vel = ctrl::Vector3D(
-                        {msg->twist.linear.x, msg->twist.linear.y, msg->twist.linear.z}
-                );
-            };
+    _des_vel = decltype(_des_vel)::Zero();
+    auto on_target_velocity_received
+            = [this](geometry_msgs::msg::TwistStamped::SharedPtr msg) {
+                  this->_des_vel = ctrl::Vector6D(
+                          {msg->twist.linear.x,
+                           msg->twist.linear.y,
+                           msg->twist.linear.z,
+                           msg->twist.angular.x,
+                           msg->twist.angular.y,
+                           msg->twist.angular.z}
+                  );
+              };
     _twist_sub = get_node()->create_subscription<geometry_msgs::msg::TwistStamped>(
             get_node()->get_parameter("target_velocity_topic").as_string(),
             10,
@@ -122,13 +139,18 @@ CartesianAdaptiveComplianceController::on_activate(
     );
 
     // Create subscription for desired wrench
-    _des_wrench = ctrl::Vector3D::Zero();
-    auto on_target_wrench_received =
-            [this](geometry_msgs::msg::WrenchStamped::SharedPtr msg) {
-                this->_des_wrench = ctrl::Vector3D(
-                        {msg->wrench.force.x, msg->wrench.force.y, msg->wrench.force.z}
-                );
-            };
+    _des_wrench = decltype(_des_wrench)::Zero();
+    auto on_target_wrench_received
+            = [this](geometry_msgs::msg::WrenchStamped::SharedPtr msg) {
+                  this->_des_wrench = ctrl::Vector6D(
+                          {msg->wrench.force.x,
+                           msg->wrench.force.y,
+                           msg->wrench.force.z,
+                           msg->wrench.torque.x,
+                           msg->wrench.torque.y,
+                           msg->wrench.torque.z}
+                  );
+              };
     _wrench_sub = get_node()->create_subscription<geometry_msgs::msg::WrenchStamped>(
             get_node()->get_parameter("target_wrench_topic").as_string(),
             10,
@@ -219,64 +241,69 @@ void CartesianAdaptiveComplianceController::_initializeVariables() {
     _x_tank = get_node()->get_parameter("tank.initial_state").as_double();
 
     // Minimum and maximum stiffness
-    const std::vector<double> Kmin_vals
+    std::vector<double> Kmin_vals
             = get_node()->get_parameter("Qp.K_min").as_double_array();
-    const std::vector<double> Kmax_vals
+    std::vector<double> Kmax_vals
             = get_node()->get_parameter("Qp.K_max").as_double_array();
-    _Kmin = ctrl::Vector3D(Kmin_vals.data());
-    _Kmax = ctrl::Vector3D(Kmax_vals.data());
+    if (Kmin_vals.size() != 6) {
+        RCLCPP_WARN(
+                get_node()->get_logger(),
+                "K_min must have 6 elements, switching to default values"
+        );
+        Kmin_vals = defaults::K_min;
+    }
+    if (Kmax_vals.size() != 6) {
+        RCLCPP_WARN(
+                get_node()->get_logger(),
+                "K_max must have 6 elements, switching to default values"
+        );
+        Kmax_vals = defaults::K_max;
+    }
+    _Kmin = ctrl::Vector6D(Kmin_vals.data());
+    _Kmax = ctrl::Vector6D(Kmax_vals.data());
     _K    = _Kmin.asDiagonal();
     _updateDamping();
-
-    m_stiffness = ctrl::Vector6D(
-                          {get_node()->get_parameter("stiffness.trans_x").as_double(),
-                           get_node()->get_parameter("stiffness.trans_y").as_double(),
-                           get_node()->get_parameter("stiffness.trans_z").as_double(),
-                           get_node()->get_parameter("stiffness.rot_x").as_double(),
-                           get_node()->get_parameter("stiffness.rot_y").as_double(),
-                           get_node()->get_parameter("stiffness.rot_z").as_double()}
-    )
-                          .asDiagonal();
+    m_stiffness = _Kmin.asDiagonal();
 
     // Weight matrices for the QP problem
     auto Q_weights = get_node()->get_parameter("Q_weights").as_double_array();
     auto R_weights = get_node()->get_parameter("R_weights").as_double_array();
-    if (Q_weights.size() != 3) {
+    if (Q_weights.size() != 6) {
         RCLCPP_WARN(
                 get_node()->get_logger(),
-                "Q_weights must have 3 elements, switching to default values"
+                "Q_weights must have 6 elements, switching to default values"
         );
         Q_weights = defaults::Q_weights;
     }
-    if (R_weights.size() != 3) {
+    if (R_weights.size() != 6) {
         RCLCPP_WARN(
                 get_node()->get_logger(),
-                "R_weights must have 3 elements, switching to default values"
+                "R_weights must have 6 elements, switching to default values"
         );
         R_weights = defaults::R_weights;
     }
-    _Q.diagonal() = ctrl::Vector3D({Q_weights[0], Q_weights[1], Q_weights[2]});
-    _R.diagonal() = ctrl::Vector3D({R_weights[0], R_weights[1], R_weights[2]});
+    _Q = ctrl::Vector6D(Q_weights.data()).asDiagonal();
+    _R = ctrl::Vector6D(R_weights.data()).asDiagonal();
 
     // Force limits
     auto F_min = get_node()->get_parameter("F_min").as_double_array();
     auto F_max = get_node()->get_parameter("F_max").as_double_array();
-    if (F_min.size() != 3) {
+    if (F_min.size() != 6) {
         RCLCPP_WARN(
                 get_node()->get_logger(),
                 "F_min must have 3 elements, switching to default values"
         );
         F_min = defaults::F_min;
     }
-    if (F_max.size() != 3) {
+    if (F_max.size() != 6) {
         RCLCPP_WARN(
                 get_node()->get_logger(),
                 "F_max must have 3 elements, switching to default values"
         );
         F_max = defaults::F_max;
     }
-    _F_min = ctrl::Vector3D({F_min[0], F_min[1], F_min[2]});
-    _F_max = ctrl::Vector3D({F_max[0], F_max[1], F_max[2]});
+    _F_min = ctrl::Vector6D(F_min.data());
+    _F_max = ctrl::Vector6D(F_max.data());
 }
 
 void CartesianAdaptiveComplianceController::_initializeQpProblem() {
@@ -300,40 +327,52 @@ void CartesianAdaptiveComplianceController::_updateStiffness() {
 
     // Variable preparation
     KDL::FrameVel        frame_vel = _getEndEffectorFrameVel();
-    const ctrl::Vector3D x{// Current position
-                           frame_vel.p.p.x(),
-                           frame_vel.p.p.y(),
-                           frame_vel.p.p.z()};
+    const ctrl::Vector3D pos_curr{// Current position
+                                  frame_vel.p.p.x(),
+                                  frame_vel.p.p.y(),
+                                  frame_vel.p.p.z()};
+    Eigen::Quaterniond   quat_curr;
+    frame_vel.M.R.GetQuaternion(
+            quat_curr.x(), quat_curr.y(), quat_curr.z(), quat_curr.w()
+    );
 
-    const ctrl::Vector3D xd{// Current velocity
+    const ctrl::Vector6D xd{// Current velocity
                             frame_vel.p.v.x(),
                             frame_vel.p.v.y(),
-                            frame_vel.p.v.z()};
+                            frame_vel.p.v.z(),
+                            frame_vel.M.w.x(),
+                            frame_vel.M.w.y(),
+                            frame_vel.M.w.z()};
 
-    const ctrl::Vector3D x_des{// Desired position
-                               MotionBase::m_target_frame.p.x(),
-                               MotionBase::m_target_frame.p.y(),
-                               MotionBase::m_target_frame.p.z()};
+    const ctrl::Vector3D pos_des{// Desired position
+                                 MotionBase::m_target_frame.p.x(),
+                                 MotionBase::m_target_frame.p.y(),
+                                 MotionBase::m_target_frame.p.z()};
+    Eigen::Quaterniond   quat_des;
+    MotionBase::m_target_frame.M.GetQuaternion(
+            quat_des.x(), quat_des.y(), quat_des.z(), quat_des.w()
+    );
 
-    const ctrl::Vector3D x_tilde  = x_des - x;      // pos tracking error
-    const ctrl::Vector3D xd_tilde = _des_vel - xd;  // vel tracking error
+    ctrl::Vector6D x_tilde;  // pos tracking error
+    x_tilde.head<3>() = pos_des - pos_curr;
+    x_tilde.tail<3>() = quat_logarithmic_map(quat_des * quat_curr.inverse());
 
-    const ctrl::Matrix3D X_tilde
+    const ctrl::Vector6D xd_tilde = _des_vel - xd;  // vel tracking error
+
+    const ctrl::Matrix6D X_tilde
             = x_tilde.asDiagonal();  // pos tracking error diag matrix
-    const ctrl::Matrix3D Xd_tilde = xd_tilde.asDiagonal();
+    const ctrl::Matrix6D Xd_tilde = xd_tilde.asDiagonal();
 
-    const ctrl::Vector3D d = _D * xd_tilde;
-    const ctrl::Vector3D f = d - _des_wrench;
+    const ctrl::Vector6D d = _D * xd_tilde;
+    const ctrl::Vector6D f = d - _des_wrench;
 
-    const ctrl::Vector3D A_bot_row = -Xd_tilde * x_tilde;
+    const ctrl::Vector6D A_bot_row = -Xd_tilde * x_tilde;
 
     const double T     = _tankEnergy();
     const double Tmin  = get_node()->get_parameter("tank.minimum_energy").as_double();
     const double sigma = T >= 1.0 ? 1 : 0;
     const double eta   = get_node()->get_parameter("tank.eta").as_double();
 
-    // const double k1 = _sigma * xd_tilde.transpose() * _D * xd_tilde -
-    // x_tilde.transpose() * _Kmin.asDiagonal() * xd_tilde;
     const double k_tmp1 = sigma * xd_tilde.transpose() * _D * xd_tilde;
     const double k_tmp2 = x_tilde.transpose() * _Kmin.asDiagonal() * xd_tilde;
     const double k_tmp3 = k_tmp1 - k_tmp2;
@@ -345,13 +384,13 @@ void CartesianAdaptiveComplianceController::_updateStiffness() {
     // Fill the QP problem
     _qp_H                       = X_tilde.transpose() * _Q * X_tilde + _R;
     _qp_g                       = X_tilde.transpose() * _Q * f - _R * _Kmin;
-    _qp_A.topLeftCorner<3, 3>() = X_tilde;
-    _qp_A.row(3)                = A_bot_row;
-    _qp_A.row(4)                = A_bot_row;
+    _qp_A.topLeftCorner<6, 6>() = X_tilde;
+    _qp_A.row(6)                = A_bot_row;
+    _qp_A.row(7)                = A_bot_row;
     _qp_x_lb                    = _Kmin;
     _qp_x_ub                    = _Kmax;
-    _qp_A_lb.topRows<3>()       = _F_min - d;
-    _qp_A_ub.topRows<3>()       = _F_max - d;
+    _qp_A_lb.topRows<6>()       = _F_min - d;
+    _qp_A_ub.topRows<6>()       = _F_max - d;
     _qp_A_lb.bottomRows<2>()    = -1e9 * Eigen::Vector2d::Ones();
     _qp_A_ub.bottomRows<2>()    = Eigen::Vector2d({k1, k2});
 
@@ -390,11 +429,11 @@ void CartesianAdaptiveComplianceController::_updateStiffness() {
     // Update the stiffness matrix
     _K = _qp_x_sol.asDiagonal();
     _updateDamping();
-    m_stiffness.topLeftCorner<3, 3>() = _K;
+    m_stiffness = _K;
 
     // Integrate energy tank
-    const ctrl::Matrix3D Kmin    = _Kmin.asDiagonal();
-    const ctrl::Vector3D w       = -(_K - Kmin) * x_tilde;
+    const ctrl::Matrix6D Kmin    = _Kmin.asDiagonal();
+    const ctrl::Vector6D w       = -(_K - Kmin) * x_tilde;
     double               dx_tank = sigma / T * xd_tilde.transpose() * _D * xd_tilde;
     dx_tank += -1 / T * w.transpose() * xd_tilde;
     _x_tank += dx_tank * _dt;

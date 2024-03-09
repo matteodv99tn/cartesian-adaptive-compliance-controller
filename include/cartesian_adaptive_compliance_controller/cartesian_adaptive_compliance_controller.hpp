@@ -120,8 +120,8 @@ private:
      *          lb <= x <= ub
      *
      */
-    static constexpr int nv = 3;  // number of variables of the qp problem
-    static constexpr int nc = 5;  // number of constraings of the qp problem
+    static constexpr int nv = 6;  // number of variables of the qp problem
+    static constexpr int nc = 8;  // number of constraings of the qp problem
 
     qpOASES::QProblem _qp_prob;
     QpMatrix<nv, nv>  _qp_H;
@@ -131,8 +131,8 @@ private:
     QpVector<nv>      _qp_x_lb, _qp_x_ub;
     QpVector<nv>      _qp_x_sol;
 
-    ctrl::Matrix3D _Q;
-    ctrl::Matrix3D _R;
+    ctrl::Matrix6D _Q;
+    ctrl::Matrix6D _R;
 
     //  _____           _
     // |_   _|_ _ _ __ | | __
@@ -143,18 +143,18 @@ private:
     double _x_tank;
     double _dt;
 
-    ctrl::Matrix3D _D;            // Damping matrix
-    ctrl::Matrix3D _K;            // Stiffness matrix
-    ctrl::Vector3D _Kmin, _Kmax;  // min/max diag. elems
-    ctrl::Vector3D _F_min, _F_max;
+    ctrl::Matrix6D _D;            // Damping matrix
+    ctrl::Matrix6D _K;            // Stiffness matrix
+    ctrl::Vector6D _Kmin, _Kmax;  // min/max diag. elems
+    ctrl::Vector6D _F_min, _F_max;
     std::unique_ptr<KDL::ChainFkSolverVel_recursive> _kin_solver;
 
     double inline _tankEnergy() const { return 0.5 * _x_tank * _x_tank; };
 
     rclcpp::Subscription<geometry_msgs::msg::TwistStamped>::SharedPtr  _twist_sub;
     rclcpp::Subscription<geometry_msgs::msg::WrenchStamped>::SharedPtr _wrench_sub;
-    ctrl::Vector3D                                                     _des_vel;
-    ctrl::Vector3D                                                     _des_wrench;
+    ctrl::Vector6D                                                     _des_vel;
+    ctrl::Vector6D                                                     _des_wrench;
 };
 
 }  // namespace cartesian_adaptive_compliance_controller

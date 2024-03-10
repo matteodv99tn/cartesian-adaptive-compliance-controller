@@ -1,6 +1,8 @@
-cmake_minimum_required(VERSION 3.5)
+cmake_minimum_required(VERSION 3.14)
 project(cartesian_adaptive_compliance_controller)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+set(ENABLE_LOGGING ON CACHE BOOL "Enable logging")
 
 set(CMAKE_CXX_STANDARD 17)
 set(ADDITIONAL_COMPILE_OPTIONS -Wall -Wextra -Wpedantic -Wno-unused-parameter)
@@ -9,6 +11,7 @@ add_compile_options(${ADDITIONAL_COMPILE_OPTIONS})
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
 endif()
+
 
 find_package(Eigen3 3.3 REQUIRED NO_MODULE)
 add_definitions(-DEIGEN_MPL2_ONLY)
@@ -42,10 +45,9 @@ set(QPOASES_INCLUDE_DIR ${EXTERNALS_DIR}/include)
 # Add the qpOASES library to the project
 add_library(qpOASES STATIC IMPORTED)
 set_target_properties(qpOASES PROPERTIES IMPORTED_LOCATION ${QPOASES_LIB_DIR}/libqpOASES.so)
+target_include_directories(qpOASES INTERFACE ${QPOASES_INCLUDE_DIR})
 
-# Add the qpOASES include directory to the project
-include_directories(${QPOASES_INCLUDE_DIR})
-
+find_package(fmt)
 
 #--------------------------------------------------------------------------------
 # Libraries
@@ -67,6 +69,11 @@ ament_target_dependencies(${PROJECT_NAME}
         ${${PROJECT_NAME}_EXPORTED_TARGETS}
         ${THIS_PACKAGE_INCLUDE_DEPENDS}
 )
+
+if(ENABLE_LOGGING AND ${fmt_FOUND})
+    target_link_libraries(${PROJECT_NAME} fmt::fmt)
+    target_compile_definitions(${PROJECT_NAME} PUBLIC LOGGING)
+endif()
 
 # Prevent pluginlib from using boost
 target_compile_definitions(${PROJECT_NAME} PUBLIC "PLUGINLIB__DISABLE_BOOST_FUNCTIONS")

@@ -21,6 +21,10 @@
 #include "rclcpp/time.hpp"
 #include "rclcpp_lifecycle/node_interfaces/lifecycle_node_interface.hpp"
 
+#ifdef LOGGING
+#include "fmt/os.h"
+#endif
+
 namespace cartesian_adaptive_compliance_controller {
 
 template <int ROWS = Eigen::Dynamic, int COLS = Eigen::Dynamic>
@@ -32,7 +36,8 @@ using QpVector = Eigen::Matrix<qpOASES::real_t, SIZE, 1>;
 class CartesianAdaptiveComplianceController
         : public cartesian_compliance_controller::CartesianComplianceController {
 public:
-    CartesianAdaptiveComplianceController() = default;
+    CartesianAdaptiveComplianceController();
+    ~CartesianAdaptiveComplianceController();
 
     // Note:
     // This way the controller won't work with the Foxy version of ROS2
@@ -59,6 +64,7 @@ public:
     // clang-format on
 
     void logParameters() const;
+
 private:
     std::vector<std::reference_wrapper<hardware_interface::LoanedStateInterface>>
                    _joint_state_vel_handles;
@@ -144,6 +150,7 @@ private:
     //
     double _x_tank;
     double _dt;
+    double _t;
 
     ctrl::Matrix6D _D;            // Damping matrix
     ctrl::Matrix6D _K;            // Stiffness matrix
@@ -157,6 +164,11 @@ private:
     rclcpp::Subscription<geometry_msgs::msg::WrenchStamped>::SharedPtr _wrench_sub;
     ctrl::Vector6D                                                     _des_vel;
     ctrl::Vector6D                                                     _des_wrench;
+
+#ifdef LOGGING
+    std::unique_ptr<fmt::v8::ostream> _logfile;
+    std::unique_ptr<fmt::v8::ostream> _configfile;
+#endif
 };
 
 }  // namespace cartesian_adaptive_compliance_controller

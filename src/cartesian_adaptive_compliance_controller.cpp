@@ -11,14 +11,12 @@
 
 #include "cartesian_adaptive_compliance_controller/cartesian_adaptive_compliance_controller.hpp"
 
-#include <Eigen/src/Geometry/Quaternion.h>
 #include <algorithm>
 #include <cstdio>
 #include <iostream>
 #include <memory>
+#include <utility>
 #include <vector>
-
-#include <geometry_msgs/msg/detail/wrench_stamped__struct.hpp>
 
 #include "cartesian_controller_base/Utility.h"
 #include "controller_interface/controller_interface_base.hpp"
@@ -32,6 +30,12 @@
 #include "qpOASES/MessageHandling.hpp"
 #include "rclcpp/logging.hpp"
 #include "rclcpp_lifecycle/node_interfaces/lifecycle_node_interface.hpp"
+
+#ifdef LOGGING
+#include "fmt/core.h"
+#include "fmt/os.h"
+#include "fmt/ostream.h"
+#endif
 
 using cartesian_adaptive_compliance_controller::CartesianAdaptiveComplianceController;
 using rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface;
@@ -51,15 +55,95 @@ const std::vector<double> K_min     = {300.0, 300.0, 100.0, 30.0, 30.0, 30.0};
 const std::vector<double> K_max     = {1000.0, 1000.0, 1000.0, 100.0, 100.0, 100.0};
 }  // namespace defaults
 
+//  _                      _
+// | |    ___   __ _  __ _(_)_ __   __ _
+// | |   / _ \ / _` |/ _` | | '_ \ / _` |
+// | |__| (_) | (_| | (_| | | | | | (_| |
+// |_____\___/ \__, |\__, |_|_| |_|\__, |
+//             |___/ |___/         |___/
+// The following are macros that are expanded at compile time to have a less verbose
+// code while logging variables to a csv file
+//
+// For instance calling
+//    log_vector<6>(*_logfile, _Kmin);
+// will expand to
+//    _logfile->print("{}", _Kmin(0));
+//    _logfile->print("{}", _Kmin(1));
+//    ... (up to 6 elements)
+//
+// Similarly
+//   log_vector_heading<6>(*_logfile, "K");
+// will expand to
+//   _logfile->print("K{}", 0);
+//   _logfile->print("K{}", 1);
+//   ... (up to 6 elements)
+#ifdef LOGGING
+template <int Size, typename Stream, typename VectorType, int... Is>
+void __log_vec(Stream& stream, const VectorType& vec, std::integer_sequence<int, Is...>) {
+    (..., (stream.print("{},", vec(Is))));
+}
+
+template <int Size, typename Stream, typename VectorType>
+void log_vector(Stream& stream, const VectorType& vec) {
+    __log_vec<Size, Stream, VectorType>(
+            static_cast<Stream&>(stream), vec, std::make_integer_sequence<int, Size>()
+    );
+}
+
+template <int Size, typename Stream, int... Is>
+void __log_vec_heading(Stream& stream, const std::string& prefix, std::integer_sequence<int, Is...>) {
+    (..., (stream.print("{}{},", prefix, Is)));
+}
+
+template <int Size, typename Stream>
+void log_vector_heading(Stream& stream, const std::string& prefix) {
+    __log_vec_heading<Size, Stream>(
+            stream, prefix, std::make_integer_sequence<int, Size>()
+    );
+}
+#endif
+
 const Eigen::Vector3d quat_logarithmic_map(const Eigen::Quaterniond& q) {
     const Eigen::Quaterniond q_normalized = q.normalized();
-    const Eigen::Vector3d u = q_normalized.vec();
-    const double nu = q_normalized.w();
+    const Eigen::Vector3d    u            = q_normalized.vec();
+    const double             nu           = q_normalized.w();
 
-    if(u.norm() < 1e-9)
-        return Eigen::Vector3d::Zero();
-    else
-        return std::acos(nu) * u.normalized();
+    if (u.norm() < 1e-9) return Eigen::Vector3d::Zero();
+    else return std::acos(nu) * u.normalized();
+}
+
+CartesianAdaptiveComplianceController::CartesianAdaptiveComplianceController() :
+        CartesianComplianceController() {
+#ifdef LOGGING
+    _logfile = std::make_unique<fmt::v8::ostream>(fmt::output_file("controller_data.csv"
+    ));
+    _configfile = std::make_unique<fmt::v8::ostream>(
+            fmt::output_file("controller_configuration.txt")
+    );
+#endif
+}
+
+CartesianAdaptiveComplianceController::~CartesianAdaptiveComplianceController() {
+#ifdef LOGGING
+    _logfile->close();
+    _configfile->close();
+
+    log_vector_heading<6>(*_logfile, "K");
+    _logfile->print("t,");
+    _logfile->print("x_tank,");
+    _logfile->print("dx_tank,");
+    _logfile->print("tank_energy,");
+    _logfile->print("sigma,");
+    log_vector_heading<6>(*_logfile, "K");
+    _logfile->print("x_tilde,y_tilde,z_tilde,rx_tilde,ry_tilde,rz_tilde,");
+    _logfile->print("dx_tilde,dy_tilde,dz_tilde,drx_tilde,dry_tilde,drz_tilde,");
+    _logfile->print("x_curr,y_curr,z_curr,qx_curr,qy_curr,qz_curr,qw_curr,");
+    _logfile->print("x_des,y_des,z_des,qx_des,qy_des,qz_des,qw_des,");
+    _logfile->print("vx_curr,vy_curr,vz_curr,wx_curr,wy_curr,wz_curr,");
+    _logfile->print("vx_des,vy_des,vz_des,wx_des,wy_des,wz_des,");
+    _logfile->print("Fx_des,Fy_des,Fz_des,Tx_des,Ty_des,Tz_des,");
+    _logfile->print("\n");
+#endif
 }
 
 LifecycleNodeInterface::CallbackReturn CartesianAdaptiveComplianceController::on_init(
@@ -183,6 +267,7 @@ CartesianAdaptiveComplianceController::on_activate(
             = std::make_unique<KDL::ChainFkSolverVel_recursive>(Base::m_robot_chain);
 
     _dt = get_node()->get_parameter("sampling_period").as_double();
+    _t  = 0;
     logParameters();
     return LifecycleNodeInterface::CallbackReturn::SUCCESS;
 }
@@ -235,19 +320,134 @@ void CartesianAdaptiveComplianceController::logParameters() const {
     const auto logger = get_node()->get_logger();
     RCLCPP_INFO(logger, "Sampling period: %f", _dt);
     RCLCPP_INFO(logger, "Tank state (energy): %f (%f)", _x_tank, _tankEnergy());
-    RCLCPP_INFO(logger, "Minimum stiffness: %f, %f, %f, %f, %f, %f",
-                _Kmin(0), _Kmin(1), _Kmin(2), _Kmin(3), _Kmin(4), _Kmin(5));
-    RCLCPP_INFO(logger, "Maximum stiffness: %f, %f, %f, %f, %f, %f",
-                _Kmax(0), _Kmax(1), _Kmax(2), _Kmax(3), _Kmax(4), _Kmax(5));
-    RCLCPP_INFO(logger, "Minimum wrench: %f, %f, %f, %f, %f, %f",
-                _F_min(0), _F_min(1), _F_min(2), _F_min(3), _F_min(4), _F_min(5));
-    RCLCPP_INFO(logger, "Maximum wrench: %f, %f, %f, %f, %f, %f",
-                _F_max(0), _F_max(1), _F_max(2), _F_max(3), _F_max(4), _F_max(5));
-    RCLCPP_INFO(logger, "Q weights: %f, %f, %f, %f, %f, %f",
-                _Q(0, 0), _Q(1, 1), _Q(2, 2), _Q(3, 3), _Q(4, 4), _Q(5, 5));
-    RCLCPP_INFO(logger, "R weights: %f, %f, %f, %f, %f, %f",
-            _R(0, 0), _R(1, 1), _R(2, 2), _R(3, 3), _R(4, 4), _R(5, 5));
-
+    RCLCPP_INFO(
+            logger,
+            "Minimum stiffness: %f, %f, %f, %f, %f, %f",
+            _Kmin(0),
+            _Kmin(1),
+            _Kmin(2),
+            _Kmin(3),
+            _Kmin(4),
+            _Kmin(5)
+    );
+    RCLCPP_INFO(
+            logger,
+            "Maximum stiffness: %f, %f, %f, %f, %f, %f",
+            _Kmax(0),
+            _Kmax(1),
+            _Kmax(2),
+            _Kmax(3),
+            _Kmax(4),
+            _Kmax(5)
+    );
+    RCLCPP_INFO(
+            logger,
+            "Minimum wrench: %f, %f, %f, %f, %f, %f",
+            _F_min(0),
+            _F_min(1),
+            _F_min(2),
+            _F_min(3),
+            _F_min(4),
+            _F_min(5)
+    );
+    RCLCPP_INFO(
+            logger,
+            "Maximum wrench: %f, %f, %f, %f, %f, %f",
+            _F_max(0),
+            _F_max(1),
+            _F_max(2),
+            _F_max(3),
+            _F_max(4),
+            _F_max(5)
+    );
+    RCLCPP_INFO(
+            logger,
+            "Q weights: %f, %f, %f, %f, %f, %f",
+            _Q(0, 0),
+            _Q(1, 1),
+            _Q(2, 2),
+            _Q(3, 3),
+            _Q(4, 4),
+            _Q(5, 5)
+    );
+    RCLCPP_INFO(
+            logger,
+            "R weights: %f, %f, %f, %f, %f, %f",
+            _R(0, 0),
+            _R(1, 1),
+            _R(2, 2),
+            _R(3, 3),
+            _R(4, 4),
+            _R(5, 5)
+    );
+    _configfile->print(
+            "R weights: {}, {}, {}, {}, {}, {}\n",
+            _R(0, 0),
+            _R(1, 1),
+            _R(2, 2),
+            _R(3, 3),
+            _R(4, 4),
+            _R(5, 5)
+    );
+    ;
+    _configfile->print(
+            "Q weights: {}, {}, {}, {}, {}, {}\n",
+            _Q(0, 0),
+            _Q(1, 1),
+            _Q(2, 2),
+            _Q(3, 3),
+            _Q(4, 4),
+            _Q(5, 5)
+    );
+    ;
+    _configfile->print(
+            "Minimum stiffnesses: {}, {}, {}, {}, {}, {}\n",
+            _Kmin(0),
+            _Kmin(1),
+            _Kmin(2),
+            _Kmin(3),
+            _Kmin(4),
+            _Kmin(5)
+    );
+    _configfile->print(
+            "Maximum stiffnesses: {}, {}, {}, {}, {}, {}\n",
+            _Kmax(0),
+            _Kmin(1),
+            _Kmin(2),
+            _Kmin(3),
+            _Kmin(4),
+            _Kmin(5)
+    );
+    _configfile->print(
+            "Minimum wrench: {}, {}, {}, {}, {}, {}\n",
+            _F_min(0),
+            _F_min(1),
+            _F_min(2),
+            _F_min(3),
+            _F_min(4),
+            _F_min(5)
+    );
+    _configfile->print(
+            "Maximum wrench: {}, {}, {}, {}, {}, {}\n",
+            _F_max(0),
+            _F_max(1),
+            _F_max(2),
+            _F_max(3),
+            _F_max(4),
+            _F_max(5)
+    );
+    _configfile->print("Sampling period: {}\n", _dt);
+    _configfile->print(
+            "Tank initial state : {}\n",
+            get_node()->get_parameter("tank.initial_state").as_double()
+    );
+    _configfile->print(
+            "Tank minimum energy: {}\n",
+            get_node()->get_parameter("tank.minimum_energy").as_double()
+    );
+    _configfile->print(
+            "Tank eta: {}\n", get_node()->get_parameter("tank.eta").as_double()
+    );
 }
 
 void CartesianAdaptiveComplianceController::_synchroniseJointVelocities() {
@@ -317,7 +517,7 @@ void CartesianAdaptiveComplianceController::_initializeVariables() {
     if (F_min.size() != 6) {
         RCLCPP_WARN(
                 get_node()->get_logger(),
-                "F_min must have 6 elements, switching to default values (got %d)",
+                "F_min must have 6 elements, switching to default values (got %lu)",
                 F_min.size()
         );
         F_min = defaults::F_min;
@@ -325,7 +525,7 @@ void CartesianAdaptiveComplianceController::_initializeVariables() {
     if (F_max.size() != 6) {
         RCLCPP_WARN(
                 get_node()->get_logger(),
-                "F_max must have 6 elements, switching to default values (got %d)",
+                "F_max must have 6 elements, switching to default values (got %lu)",
                 F_max.size()
         );
         F_max = defaults::F_max;
@@ -465,6 +665,27 @@ void CartesianAdaptiveComplianceController::_updateStiffness() {
     double               dx_tank = sigma / T * xd_tilde.transpose() * _D * xd_tilde;
     dx_tank += -1 / T * w.transpose() * xd_tilde;
     _x_tank += dx_tank * _dt;
+
+    // Log the data
+#ifdef LOGGING
+    _logfile->print("{},", _t);
+    _logfile->print("{},", _x_tank);
+    _logfile->print("{},", dx_tank);
+    _logfile->print("{},", _tankEnergy());
+    _logfile->print("{},", sigma);
+    log_vector<6>(*_logfile, _K.diagonal());
+    log_vector<6>(*_logfile, x_tilde);
+    log_vector<6>(*_logfile, xd_tilde);
+    log_vector<3>(*_logfile, pos_curr);
+    log_vector<4>(*_logfile, quat_curr.coeffs());
+    log_vector<3>(*_logfile, pos_des);
+    log_vector<4>(*_logfile, quat_des.coeffs());
+    log_vector<6>(*_logfile, xd);
+    log_vector<6>(*_logfile, _des_vel);
+    log_vector<6>(*_logfile, _des_wrench);
+    _logfile->print("\n");
+#endif
+    _t += _dt;
 }
 
 void CartesianAdaptiveComplianceController::_updateDamping() {

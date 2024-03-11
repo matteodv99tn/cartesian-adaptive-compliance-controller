@@ -645,7 +645,7 @@ void CartesianAdaptiveComplianceController::_updateStiffness() {
 
 
     // Solve the QP problem:
-    qpOASES::int_t       nWSR = 10;
+    qpOASES::int_t       nWSR = 20;
     qpOASES::returnValue ret  = _qp_prob.init(
             _qp_H.data(),
             _qp_g.data(),
@@ -713,12 +713,14 @@ void CartesianAdaptiveComplianceController::_updateStiffness() {
     Float64MultiArray xtilde_msg;
     Float64MultiArray dxtilde_msg;
 
-    tank_state_msg.data.reserve(3);
-    stiffness_msg.data.reserve(6);
-    damping_msg.data.reserve(6);
+    tank_state_msg.data.resize(3);
+    stiffness_msg.data.resize(6);
+    damping_msg.data.resize(6);
+    xtilde_msg.data.resize(6);
+    dxtilde_msg.data.resize(6);
 
     for (int i = 0; i < 6; i++) {
-        tank_state_msg.data[i] = _K(i, i);
+        stiffness_msg.data[i] = _K(i, i);
         damping_msg.data[i] = _D(i, i);
         xtilde_msg.data[i] = x_tilde(i);
         dxtilde_msg.data[i] = xd_tilde(i);
@@ -734,6 +736,29 @@ void CartesianAdaptiveComplianceController::_updateStiffness() {
     _dxtilde_pub->publish(dxtilde_msg);
 
     _t += _dt;
+
+    static int ii = 0;
+    if(ii % 1000 == 0){
+        std::cout << ii << "--------------------" << std::endl;
+        std::cout << m_stiffness << std::endl;
+    }
+    ii++;
+
+    rclcpp::Parameter trans_stiff_x("stiffness.trans_x", _K(0,0));
+    rclcpp::Parameter trans_stiff_y("stiffness.trans_y", _K(1,1));
+    rclcpp::Parameter trans_stiff_z("stiffness.trans_z", _K(2,2));
+    rclcpp::Parameter rot_stiff_x("stiffness.rot_x", _K(3,3));
+    rclcpp::Parameter rot_stiff_y("stiffness.rot_y", _K(4,4));
+    rclcpp::Parameter rot_stiff_z("stiffness.rot_z", _K(5,5));
+
+    get_node()->set_parameter(trans_stiff_x);
+    get_node()->set_parameter(trans_stiff_y);
+    get_node()->set_parameter(trans_stiff_z);
+    get_node()->set_parameter(rot_stiff_x);
+    get_node()->set_parameter(rot_stiff_y);
+    get_node()->set_parameter(rot_stiff_z);
+    //get_node()->set_parameter("stiffness.trans_y", _K(1,1));
+    //get_node()->set_parameter("stiffness.trans_z", _K(2,2));
 }
 
 void CartesianAdaptiveComplianceController::_updateDamping() {

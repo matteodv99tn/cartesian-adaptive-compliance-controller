@@ -12,11 +12,13 @@
 #include "cartesian_adaptive_compliance_controller/cartesian_adaptive_compliance_controller.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <iostream>
 #include <memory>
 #include <utility>
 #include <vector>
+#include <std_msgs/msg/detail/float64_multi_array__struct.hpp>
 
 #include "cartesian_controller_base/Utility.h"
 #include "controller_interface/controller_interface_base.hpp"
@@ -30,6 +32,7 @@
 #include "qpOASES/MessageHandling.hpp"
 #include "rclcpp/logging.hpp"
 #include "rclcpp_lifecycle/node_interfaces/lifecycle_node_interface.hpp"
+#include "std_msgs/msg/float64_multi_array.hpp"
 
 #ifdef LOGGING
 #include "fmt/core.h"
@@ -39,6 +42,7 @@
 
 using cartesian_adaptive_compliance_controller::CartesianAdaptiveComplianceController;
 using rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface;
+using std_msgs::msg::Float64MultiArray;
 
 namespace defaults {
 const std::string         target_velocity_topic = "/target_velocity";
@@ -188,6 +192,23 @@ CartesianAdaptiveComplianceController::on_configure(
     // Initialisation of the variables
     _initializeVariables();
     _initializeQpProblem();
+
+    _tank_state_pub = get_node()->create_publisher<Float64MultiArray>(
+            "/log/tank_state", rclcpp::QoS(10).transient_local()
+    );
+    _stiffness_pub = get_node()->create_publisher<Float64MultiArray>(
+            "/log/stiffness", rclcpp::QoS(10).transient_local()
+    );
+    _damping_pub = get_node()->create_publisher<Float64MultiArray>(
+            "/log/damping", rclcpp::QoS(10).transient_local()
+    );
+    _xtilde_pub = get_node()->create_publisher<Float64MultiArray>(
+            "/log/xtilde", rclcpp::QoS(10).transient_local()
+    );
+    _dxtilde_pub = get_node()->create_publisher<Float64MultiArray>(
+            "/log/dxtilde", rclcpp::QoS(10).transient_local()
+    );
+
 
     return LifecycleNodeInterface::CallbackReturn::SUCCESS;
 }
@@ -685,6 +706,33 @@ void CartesianAdaptiveComplianceController::_updateStiffness() {
     log_vector<6>(*_logfile, _des_wrench);
     _logfile->print("\n");
 #endif
+
+    Float64MultiArray tank_state_msg;
+    Float64MultiArray stiffness_msg;
+    Float64MultiArray damping_msg;
+    Float64MultiArray xtilde_msg;
+    Float64MultiArray dxtilde_msg;
+
+    tank_state_msg.data.reserve(3);
+    stiffness_msg.data.reserve(6);
+    damping_msg.data.reserve(6);
+
+    for (int i = 0; i < 6; i++) {
+        tank_state_msg.data[i] = _K(i, i);
+        damping_msg.data[i] = _D(i, i);
+        xtilde_msg.data[i] = x_tilde(i);
+        dxtilde_msg.data[i] = xd_tilde(i);
+    }
+    tank_state_msg.data[0] = _x_tank;
+    tank_state_msg.data[1] = dx_tank;
+    tank_state_msg.data[2] = _tankEnergy();
+
+    _tank_state_pub->publish(tank_state_msg);
+    _stiffness_pub->publish(stiffness_msg);
+    _damping_pub->publish(damping_msg);
+    _xtilde_pub->publish(xtilde_msg);
+    _dxtilde_pub->publish(dxtilde_msg);
+
     _t += _dt;
 }
 

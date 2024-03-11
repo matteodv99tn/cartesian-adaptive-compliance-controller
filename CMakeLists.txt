@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.14)
 project(cartesian_adaptive_compliance_controller)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-set(ENABLE_LOGGING ON CACHE BOOL "Enable logging")
+set(ENABLE_LOGGING OFF CACHE BOOL "Enable logging")
 
 set(CMAKE_CXX_STANDARD 17)
 set(ADDITIONAL_COMPILE_OPTIONS -Wall -Wextra -Wpedantic -Wno-unused-parameter)

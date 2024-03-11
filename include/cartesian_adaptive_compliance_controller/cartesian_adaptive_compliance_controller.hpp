@@ -7,8 +7,6 @@
 #include <memory>
 #include <vector>
 
-#include <geometry_msgs/msg/detail/wrench_stamped__struct.hpp>
-
 #include "cartesian_compliance_controller/cartesian_compliance_controller.h"
 #include "cartesian_controller_base/Utility.h"
 #include "geometry_msgs/msg/twist_stamped.hpp"
@@ -20,6 +18,7 @@
 #include "qpOASES/QProblem.hpp"
 #include "rclcpp/time.hpp"
 #include "rclcpp_lifecycle/node_interfaces/lifecycle_node_interface.hpp"
+#include "std_msgs/msg/float64_multi_array.hpp"
 
 #ifdef LOGGING
 #include "fmt/os.h"
@@ -164,6 +163,12 @@ private:
     rclcpp::Subscription<geometry_msgs::msg::WrenchStamped>::SharedPtr _wrench_sub;
     ctrl::Vector6D                                                     _des_vel;
     ctrl::Vector6D                                                     _des_wrench;
+
+    rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr _tank_state_pub;
+    rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr _stiffness_pub;
+    rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr _damping_pub;
+    rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr _xtilde_pub;
+    rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr _dxtilde_pub;
 
 #ifdef LOGGING
     std::unique_ptr<fmt::v8::ostream> _logfile;

@@ -124,15 +124,7 @@ CartesianAdaptiveComplianceController::CartesianAdaptiveComplianceController() :
     _configfile = std::make_unique<fmt::v8::ostream>(
             fmt::output_file("controller_configuration.txt")
     );
-#endif
-}
 
-CartesianAdaptiveComplianceController::~CartesianAdaptiveComplianceController() {
-#ifdef LOGGING
-    _logfile->close();
-    _configfile->close();
-
-    log_vector_heading<6>(*_logfile, "K");
     _logfile->print("t,");
     _logfile->print("x_tank,");
     _logfile->print("dx_tank,");
@@ -147,6 +139,16 @@ CartesianAdaptiveComplianceController::~CartesianAdaptiveComplianceController() 
     _logfile->print("vx_des,vy_des,vz_des,wx_des,wy_des,wz_des,");
     _logfile->print("Fx_des,Fy_des,Fz_des,Tx_des,Ty_des,Tz_des,");
     _logfile->print("\n");
+#endif
+}
+
+CartesianAdaptiveComplianceController::~CartesianAdaptiveComplianceController() {
+#ifdef LOGGING
+    _logfile->close();
+    _configfile->close();
+
+    // log_vector_heading<6>(*_logfile, "K");
+
 #endif
 }
 
@@ -737,12 +739,12 @@ void CartesianAdaptiveComplianceController::_updateStiffness() {
 
     _t += _dt;
 
-    static int ii = 0;
-    if(ii % 1000 == 0){
-        std::cout << ii << "--------------------" << std::endl;
-        std::cout << m_stiffness << std::endl;
-    }
-    ii++;
+    // static int ii = 0;
+    // if(ii % 1000 == 0){
+    //     std::cout << ii << "--------------------" << std::endl;
+    //     std::cout << m_stiffness << std::endl;
+    // }
+    // ii++;
 
     rclcpp::Parameter trans_stiff_x("stiffness.trans_x", _K(0,0));
     rclcpp::Parameter trans_stiff_y("stiffness.trans_y", _K(1,1));
@@ -763,6 +765,7 @@ void CartesianAdaptiveComplianceController::_updateStiffness() {
 
 void CartesianAdaptiveComplianceController::_updateDamping() {
     _D = 2.0 * 0.707 * _K.diagonal().cwiseSqrt().asDiagonal();
+    // _D = 0.02 * _K.diagonal().cwiseSqrt().asDiagonal();
 }
 
 KDL::FrameVel CartesianAdaptiveComplianceController::_getEndEffectorFrameVel() const {

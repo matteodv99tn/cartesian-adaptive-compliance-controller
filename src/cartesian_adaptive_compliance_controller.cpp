@@ -767,30 +767,6 @@ void CartesianAdaptiveComplianceController::_updateStiffness() {
     _dxtilde_pub->publish(dxtilde_msg);
 
     _t += _dt;
-
-    // static int ii = 0;
-    // if(ii % 1000 == 0){
-    //     std::cout << ii << "--------------------" << std::endl;
-    //     std::cout << m_stiffness << std::endl;
-    // }
-    // ii++;
-
-    rclcpp::Parameter trans_stiff_x("stiffness.trans_x", _K(0, 0));
-    rclcpp::Parameter trans_stiff_y("stiffness.trans_y", _K(1, 1));
-    rclcpp::Parameter trans_stiff_z("stiffness.trans_z", _K(2, 2));
-    rclcpp::Parameter rot_stiff_x("stiffness.rot_x", _K(3, 3));
-    rclcpp::Parameter rot_stiff_y("stiffness.rot_y", _K(4, 4));
-    rclcpp::Parameter rot_stiff_z("stiffness.rot_z", _K(5, 5));
-
-    get_node()->set_parameter(trans_stiff_x);
-    get_node()->set_parameter(trans_stiff_y);
-    get_node()->set_parameter(trans_stiff_z);
-    get_node()->set_parameter(rot_stiff_x);
-    get_node()->set_parameter(rot_stiff_y);
-    get_node()->set_parameter(rot_stiff_z);
-    // get_node()->set_parameter("stiffness.trans_y", _K(1,1));
-    // get_node()->set_parameter("stiffness.trans_z", _K(2,2));
-    // std::cout << _des_wrench.transpose() << std::endl;
 }
 
 void CartesianAdaptiveComplianceController::_updateDamping() {

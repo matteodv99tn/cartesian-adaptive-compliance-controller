@@ -18,6 +18,7 @@
 #include <memory>
 #include <utility>
 #include <vector>
+
 #include <std_msgs/msg/detail/float64_multi_array__struct.hpp>
 
 #include "cartesian_controller_base/Utility.h"
@@ -211,7 +212,6 @@ CartesianAdaptiveComplianceController::on_configure(
             "/log/dxtilde", rclcpp::QoS(10).transient_local()
     );
 
-
     return LifecycleNodeInterface::CallbackReturn::SUCCESS;
 }
 
@@ -311,7 +311,7 @@ CartesianAdaptiveComplianceController::on_deactivate(
 }
 
 #if defined CARTESIAN_CONTROLLERS_GALACTIC || defined CARTESIAN_CONTROLLERS_HUMBLE     \
-        || defined                                    CARTESIAN_CONTROLLERS_IRON
+        || defined CARTESIAN_CONTROLLERS_IRON
 controller_interface::return_type CartesianAdaptiveComplianceController::update(
         const rclcpp::Time& time, const rclcpp::Duration& period
 ) {
@@ -330,13 +330,24 @@ controller_interface::return_type CartesianAdaptiveComplianceController::update(
     // --- Same control loop of the cartesian compliance controller
     for (int i = 0; i < Base::m_iterations; ++i) {
         auto           internal_period = rclcpp::Duration::from_seconds(0.02);
-        ctrl::Vector6D error           = cartesian_compliance_controller::
-                CartesianComplianceController::computeComplianceError();
+        ctrl::Vector6D error
+                = CartesianAdaptiveComplianceController::computeComplianceError();
         Base::computeJointControlCmds(error, internal_period);
     }
     Base::writeJointControlCmds();
 
     return controller_interface::return_type::OK;
+}
+
+ctrl::Vector6D CartesianAdaptiveComplianceController::computeComplianceError() {
+    ctrl::Vector6D net_force =
+            // Spring force in base orientation
+            Base::displayInBaseLink(m_stiffness, m_compliance_ref_link)
+                    * MotionBase::computeMotionError()
+            - Base::displayInBaseLink(_D, m_compliance_ref_link) * _ee_vel
+            // Sensor and target force in base orientation
+            + ForceBase::computeForceError();
+    return net_force;
 }
 
 void CartesianAdaptiveComplianceController::logParameters() const {
@@ -581,7 +592,8 @@ void CartesianAdaptiveComplianceController::_updateStiffness() {
     const ctrl::Vector3D pos_curr{// Current position
                                   frame_vel.p.p.x(),
                                   frame_vel.p.p.y(),
-                                  frame_vel.p.p.z()};
+                                  frame_vel.p.p.z()
+    };
     Eigen::Quaterniond   quat_curr;
     frame_vel.M.R.GetQuaternion(
             quat_curr.x(), quat_curr.y(), quat_curr.z(), quat_curr.w()
@@ -593,22 +605,31 @@ void CartesianAdaptiveComplianceController::_updateStiffness() {
                             frame_vel.p.v.z(),
                             frame_vel.M.w.x(),
                             frame_vel.M.w.y(),
-                            frame_vel.M.w.z()};
+                            frame_vel.M.w.z()
+    };
+    _ee_vel = xd;
 
     const ctrl::Vector3D pos_des{// Desired position
                                  MotionBase::m_target_frame.p.x(),
                                  MotionBase::m_target_frame.p.y(),
-                                 MotionBase::m_target_frame.p.z()};
+                                 MotionBase::m_target_frame.p.z()
+    };
     Eigen::Quaterniond   quat_des;
     MotionBase::m_target_frame.M.GetQuaternion(
             quat_des.x(), quat_des.y(), quat_des.z(), quat_des.w()
     );
 
     ctrl::Vector6D x_tilde;  // pos tracking error
-    x_tilde.head<3>() = pos_des - pos_curr;
-    x_tilde.tail<3>() = quat_logarithmic_map(quat_des * quat_curr.inverse());
+    // x_tilde.head<3>() = pos_curr - pos_des;
+    x_tilde.tail<3>() = quat_logarithmic_map(quat_curr * quat_des.inverse());
 
+#if 1
+    x_tilde.head<3>()             = pos_des - pos_curr;
     const ctrl::Vector6D xd_tilde = _des_vel - xd;  // vel tracking error
+#else
+    x_tilde.head<3>()             = pos_curr - pos_des;
+    const ctrl::Vector6D xd_tilde = xd - _des_vel;  // vel tracking error
+#endif
 
     const ctrl::Matrix6D X_tilde
             = x_tilde.asDiagonal();  // pos tracking error diag matrix
@@ -621,8 +642,9 @@ void CartesianAdaptiveComplianceController::_updateStiffness() {
 
     const double T     = _tankEnergy();
     const double Tmin  = get_node()->get_parameter("tank.minimum_energy").as_double();
-    const double sigma = T >= 1.0 ? 1 : 0;
-    const double eta   = get_node()->get_parameter("tank.eta").as_double();
+    const double sigma = (T <= 1.0) ? 1.0 : 0.0;
+    // const double sigma = 0;
+    const double eta = get_node()->get_parameter("tank.eta").as_double();
 
     const double k_tmp1 = sigma * xd_tilde.transpose() * _D * xd_tilde;
     const double k_tmp2 = x_tilde.transpose() * _Kmin.asDiagonal() * xd_tilde;
@@ -644,6 +666,7 @@ void CartesianAdaptiveComplianceController::_updateStiffness() {
     _qp_A_ub.topRows<6>()       = _F_max - d;
     _qp_A_lb.bottomRows<2>()    = -1e9 * Eigen::Vector2d::Ones();
     _qp_A_ub.bottomRows<2>()    = Eigen::Vector2d({k1, k2});
+    // _qp_A_ub.bottomRows<2>() = 1e9 * Eigen::Vector2d::Ones();
 
 
     // Solve the QP problem:
@@ -674,19 +697,23 @@ void CartesianAdaptiveComplianceController::_updateStiffness() {
             );
         }
         // Maybe set default values
-        return;
+        // return;
+
+    } else {
+        // Update the stiffness matrix
+        _K = _qp_x_sol.asDiagonal();
+        // _K = _Kmin.asDiagonal();
+        _updateDamping();
+        m_stiffness = _K;
     }
 
-    // Update the stiffness matrix
-    _K = _qp_x_sol.asDiagonal();
-    _updateDamping();
-    m_stiffness = _K;
-
     // Integrate energy tank
-    const ctrl::Matrix6D Kmin    = _Kmin.asDiagonal();
-    const ctrl::Vector6D w       = -(_K - Kmin) * x_tilde;
-    double               dx_tank = sigma / T * xd_tilde.transpose() * _D * xd_tilde;
-    dx_tank += -1 / T * w.transpose() * xd_tilde;
+    const ctrl::Matrix6D Kmin = _Kmin.asDiagonal();
+    ctrl::Vector6D       w    = -(_K - Kmin) * x_tilde;
+    if (T < Tmin) w = ctrl::Vector6D::Zero();
+    const double dx_tank_1 = sigma / _x_tank * xd_tilde.transpose() * _D * xd_tilde;
+    const double dx_tank_2 = -(1 / _x_tank) * w.transpose() * xd_tilde;
+    const double dx_tank   = dx_tank_1 + dx_tank_2;
     _x_tank += dx_tank * _dt;
 
     // Log the data
@@ -715,7 +742,7 @@ void CartesianAdaptiveComplianceController::_updateStiffness() {
     Float64MultiArray xtilde_msg;
     Float64MultiArray dxtilde_msg;
 
-    tank_state_msg.data.resize(3);
+    tank_state_msg.data.resize(5);
     stiffness_msg.data.resize(6);
     damping_msg.data.resize(6);
     xtilde_msg.data.resize(6);
@@ -723,13 +750,15 @@ void CartesianAdaptiveComplianceController::_updateStiffness() {
 
     for (int i = 0; i < 6; i++) {
         stiffness_msg.data[i] = _K(i, i);
-        damping_msg.data[i] = _D(i, i);
-        xtilde_msg.data[i] = x_tilde(i);
-        dxtilde_msg.data[i] = xd_tilde(i);
+        damping_msg.data[i]   = _D(i, i);
+        xtilde_msg.data[i]    = x_tilde(i);
+        dxtilde_msg.data[i]   = xd_tilde(i);
     }
     tank_state_msg.data[0] = _x_tank;
     tank_state_msg.data[1] = dx_tank;
     tank_state_msg.data[2] = _tankEnergy();
+    tank_state_msg.data[3] = qp_solve_status == qpOASES::SUCCESSFUL_RETURN;
+    tank_state_msg.data[4] = dx_tank_2;
 
     _tank_state_pub->publish(tank_state_msg);
     _stiffness_pub->publish(stiffness_msg);
@@ -746,12 +775,12 @@ void CartesianAdaptiveComplianceController::_updateStiffness() {
     // }
     // ii++;
 
-    rclcpp::Parameter trans_stiff_x("stiffness.trans_x", _K(0,0));
-    rclcpp::Parameter trans_stiff_y("stiffness.trans_y", _K(1,1));
-    rclcpp::Parameter trans_stiff_z("stiffness.trans_z", _K(2,2));
-    rclcpp::Parameter rot_stiff_x("stiffness.rot_x", _K(3,3));
-    rclcpp::Parameter rot_stiff_y("stiffness.rot_y", _K(4,4));
-    rclcpp::Parameter rot_stiff_z("stiffness.rot_z", _K(5,5));
+    rclcpp::Parameter trans_stiff_x("stiffness.trans_x", _K(0, 0));
+    rclcpp::Parameter trans_stiff_y("stiffness.trans_y", _K(1, 1));
+    rclcpp::Parameter trans_stiff_z("stiffness.trans_z", _K(2, 2));
+    rclcpp::Parameter rot_stiff_x("stiffness.rot_x", _K(3, 3));
+    rclcpp::Parameter rot_stiff_y("stiffness.rot_y", _K(4, 4));
+    rclcpp::Parameter rot_stiff_z("stiffness.rot_z", _K(5, 5));
 
     get_node()->set_parameter(trans_stiff_x);
     get_node()->set_parameter(trans_stiff_y);
@@ -759,12 +788,13 @@ void CartesianAdaptiveComplianceController::_updateStiffness() {
     get_node()->set_parameter(rot_stiff_x);
     get_node()->set_parameter(rot_stiff_y);
     get_node()->set_parameter(rot_stiff_z);
-    //get_node()->set_parameter("stiffness.trans_y", _K(1,1));
-    //get_node()->set_parameter("stiffness.trans_z", _K(2,2));
+    // get_node()->set_parameter("stiffness.trans_y", _K(1,1));
+    // get_node()->set_parameter("stiffness.trans_z", _K(2,2));
+    // std::cout << _des_wrench.transpose() << std::endl;
 }
 
 void CartesianAdaptiveComplianceController::_updateDamping() {
-    _D = 2.0 * 0.707 * _K.diagonal().cwiseSqrt().asDiagonal();
+    _D = 2.0 * _K.diagonal().cwiseSqrt().asDiagonal();
     // _D = 0.02 * _K.diagonal().cwiseSqrt().asDiagonal();
 }
 

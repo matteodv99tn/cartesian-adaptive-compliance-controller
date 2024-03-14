@@ -112,6 +112,12 @@ private:
      */
     KDL::FrameVel _getEndEffectorFrameVel() const;
 
+    /**
+     * @brief Computes the compliance error for the forward dynamic solver
+     *
+     */
+    ctrl::Vector6D computeComplianceError();
+
 
     //   ___  ____    ____            _     _
     //  / _ \|  _ \  |  _ \ _ __ ___ | |__ | | ___ _ __ ___
@@ -138,6 +144,7 @@ private:
     QpVector<nv>      _qp_x_lb, _qp_x_ub;
     QpVector<nv>      _qp_x_sol;
 
+
     ctrl::Matrix6D _Q;
     ctrl::Matrix6D _R;
 
@@ -163,6 +170,8 @@ private:
     rclcpp::Subscription<geometry_msgs::msg::WrenchStamped>::SharedPtr _wrench_sub;
     ctrl::Vector6D                                                     _des_vel;
     ctrl::Vector6D                                                     _des_wrench;
+
+    ctrl::Vector6D _ee_vel; // end-effector velocity
 
     rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr _tank_state_pub;
     rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr _stiffness_pub;

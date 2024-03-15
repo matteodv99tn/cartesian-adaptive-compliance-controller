@@ -620,16 +620,11 @@ void CartesianAdaptiveComplianceController::_updateStiffness() {
     );
 
     ctrl::Vector6D x_tilde;  // pos tracking error
-    // x_tilde.head<3>() = pos_curr - pos_des;
+    x_tilde.head<3>() = pos_curr - pos_des;
+    // x_tilde.head<3>() = pos_des - pos_curr;
     x_tilde.tail<3>() = quat_logarithmic_map(quat_curr * quat_des.inverse());
-
-#if 1
-    x_tilde.head<3>()             = pos_des - pos_curr;
-    const ctrl::Vector6D xd_tilde = _des_vel - xd;  // vel tracking error
-#else
-    x_tilde.head<3>()             = pos_curr - pos_des;
-    const ctrl::Vector6D xd_tilde = xd - _des_vel;  // vel tracking error
-#endif
+    const ctrl::Vector6D xd_tilde = xd - _des_vel;
+    // const ctrl::Vector6D xd_tilde = _des_vel - xd;
 
     const ctrl::Matrix6D X_tilde
             = x_tilde.asDiagonal();  // pos tracking error diag matrix
@@ -652,6 +647,7 @@ void CartesianAdaptiveComplianceController::_updateStiffness() {
 
     const double k1 = k_tmp3 + (T - Tmin) / _dt;
     const double k2 = k_tmp3 - eta;
+    const double k3 = k_tmp3 - 0.2;
 
 
     // Fill the QP problem
@@ -660,12 +656,13 @@ void CartesianAdaptiveComplianceController::_updateStiffness() {
     _qp_A.topLeftCorner<6, 6>() = X_tilde;
     _qp_A.row(6)                = A_bot_row;
     _qp_A.row(7)                = A_bot_row;
+    _qp_A.row(8)                = A_bot_row;
     _qp_x_lb                    = _Kmin;
     _qp_x_ub                    = _Kmax;
     _qp_A_lb.topRows<6>()       = _F_min - d;
     _qp_A_ub.topRows<6>()       = _F_max - d;
-    _qp_A_lb.bottomRows<2>()    = -1e9 * Eigen::Vector2d::Ones();
-    _qp_A_ub.bottomRows<2>()    = Eigen::Vector2d({k1, k2});
+    _qp_A_lb.bottomRows<3>()    = Eigen::Vector3d({-1e9, -1e9, k3});
+    _qp_A_ub.bottomRows<3>()    = Eigen::Vector3d({k1, k2, 1e9});
     // _qp_A_ub.bottomRows<2>() = 1e9 * Eigen::Vector2d::Ones();
 
 

@@ -134,7 +134,7 @@ private:
      *
      */
     static constexpr int nv = 6;  // number of variables of the qp problem
-    static constexpr int nc = 8;  // number of constraings of the qp problem
+    static constexpr int nc = 9;  // number of constraings of the qp problem
 
     qpOASES::QProblem _qp_prob;
     QpMatrix<nv, nv>  _qp_H;

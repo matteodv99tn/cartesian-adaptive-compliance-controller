@@ -12,8 +12,8 @@
 #include "geometry_msgs/msg/twist_stamped.hpp"
 #include "geometry_msgs/msg/wrench_stamped.hpp"
 #include "hardware_interface/loaned_state_interface.hpp"
-#include "kdl/chainfksolvervel_recursive.hpp"
-#include "kdl/framevel.hpp"
+#include "pinocchio/multibody/data.hpp"
+#include "pinocchio/multibody/model.hpp"
 #include "qpOASES.hpp"
 #include "qpOASES/QProblem.hpp"
 #include "rclcpp/time.hpp"
@@ -74,7 +74,7 @@ private:
      * _joint_velocities
      *
      */
-    void _synchroniseJointVelocities();
+    void _synchronisePinocchioModel();
 
     /**
      * @brief Initialise some variables of the controller reading from the parameter
@@ -105,12 +105,6 @@ private:
      *
      */
     void _updateDamping();
-
-    /**
-     * @brief Returns the end-effector frame velocity
-     *
-     */
-    KDL::FrameVel _getFrameWithVelocity(const int& link_idx) const;
 
     /**
      * @brief Computes the compliance error for the forward dynamic solver
@@ -148,6 +142,14 @@ private:
     ctrl::Matrix6D _Q;
     ctrl::Matrix6D _R;
 
+    pinocchio::Model _pin_model;
+    pinocchio::Data  _pin_data;
+    ctrl::Vector6D   _q, _qd;
+
+    std::string _base_link_name;
+    std::string _ee_link_name;
+    std::string _compliance_link_name;
+
     //  _____           _
     // |_   _|_ _ _ __ | | __
     //   | |/ _` | '_ \| |/ /
@@ -163,13 +165,6 @@ private:
     ctrl::Vector6D _Kmin, _Kmax;  // min/max diag. elems
     ctrl::Vector6D _F_min, _F_max;
 
-    std::unique_ptr<KDL::ChainFkSolverVel_recursive> _kin_solver;
-    KDL::JntArray _q, _qd;
-    KDL::JntArrayVel _joint_data;
-    int _base_link_idx;
-    int _ee_link_idx;
-    int _compliance_link_idx;
-
     double inline _tankEnergy() const { return 0.5 * _x_tank * _x_tank; };
 
     rclcpp::Subscription<geometry_msgs::msg::TwistStamped>::SharedPtr  _twist_sub;
@@ -177,7 +172,7 @@ private:
     ctrl::Vector6D                                                     _des_vel;
     ctrl::Vector6D                                                     _des_wrench;
 
-    ctrl::Vector6D _ee_vel; // end-effector velocity
+    ctrl::Vector6D _ee_vel;  // end-effector velocity
 
     rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr _tank_state_pub;
     rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr _stiffness_pub;

@@ -30,9 +30,11 @@
 #include "controller_interface/helpers.hpp"
 #include "geometry_msgs/msg/twist_stamped.hpp"
 #include "hardware_interface/types/hardware_interface_type_values.hpp"
-#include "kdl/chainfksolvervel_recursive.hpp"
-#include "kdl/jntarray.hpp"
-#include "kdl/jntarrayvel.hpp"
+#include "pinocchio/multibody/data.hpp"
+#include "pinocchio/multibody/fwd.hpp"
+#include "pinocchio/multibody/model.hpp"
+#include "pinocchio/algorithm/kinematics.hpp"
+#include "pinocchio/parsers/urdf.hpp"
 #include "qpOASES.hpp"
 #include "qpOASES/MessageHandling.hpp"
 #include "rclcpp/logging.hpp"
@@ -346,8 +348,13 @@ CartesianAdaptiveComplianceController::on_activate(
     }
 
     _joint_velocities = ctrl::VectorND::Zero(joints.size());
-    _kin_solver
-            = std::make_unique<KDL::ChainFkSolverVel_recursive>(Base::m_robot_chain);
+    pinocchio::urdf::buildModel(get_node()->get_parameter("robot_description").as_string(),
+                                _pin_model);
+    _pin_data = pinocchio::Data(_pin_model);
+
+    _base_link_name = get_node()->get_parameter("robot_base_link").as_string();
+    _compliance_link_name = get_node()->get_parameter("compliance_ref_link").as_string();
+    _ee_link_name = get_node()->get_parameter("end_effector_link").as_string();
 
     _dt = get_node()->get_parameter("sampling_period").as_double();
     _t  = 0;
@@ -384,7 +391,7 @@ controller_interface::return_type CartesianAdaptiveComplianceController::update(
 
     // Synchronize the internal model and the real robot
     Base::m_ik_solver->synchronizeJointPositions(Base::m_joint_state_pos_handles);
-    _synchroniseJointVelocities();
+    _synchronisePinocchioModel();
     _updateStiffness();
 
     // --- Same control loop of the cartesian compliance controller
@@ -546,17 +553,13 @@ void CartesianAdaptiveComplianceController::logParameters() const {
 #endif
 }
 
-void CartesianAdaptiveComplianceController::_synchroniseJointVelocities() {
-    _q.resize(_joint_state_vel_handles.size());
-    _qd.resize(_joint_state_vel_handles.size());
+void CartesianAdaptiveComplianceController::_synchronisePinocchioModel() {
+    Eigen::VectorXd q = Eigen::VectorXd::Zero(_pin_model.nq);
     for (std::size_t i = 0; i < _joint_state_vel_handles.size(); ++i) {
         _joint_velocities(i) = _joint_state_vel_handles[i].get().get_value();
-        _qd(i)               = _joint_velocities(i);
-        _q(i)                = Base::m_joint_state_pos_handles[i].get().get_value();
+        q(i)                 = Base::m_joint_state_pos_handles[i].get().get_value();
     }
-
-    // _joint_data.q    = _q;
-    // _joint_data.qdot = _qd;
+    pinocchio::forwardKinematics(_pin_model, _pin_data, q, _joint_velocities);
 }
 
 void CartesianAdaptiveComplianceController::_initializeVariables() {
@@ -664,53 +667,10 @@ void CartesianAdaptiveComplianceController::_initializeQpProblem() {
 }
 
 void CartesianAdaptiveComplianceController::_updateStiffness() {
-    // TODO: fill values of the qp variables
 
-    // Variable preparation
-    KDL::FrameVel ee_frame         = _getFrameWithVelocity(_ee_link_idx);
-    KDL::FrameVel compliance_frame = _getFrameWithVelocity(_compliance_link_idx);
-    KDL::FrameVel base_frame       = _getFrameWithVelocity(_base_link_idx);
-    KDL::Frame    target           = MotionBase::m_target_frame;
-
-    const Eigen::Vector3d    ee_pos_base     = get_position(ee_frame);
-    const Eigen::Quaterniond ee_ori_base     = get_quaternion(ee_frame);
-    const Eigen::Vector3d    ee_des_pos_base = get_position(target);
-    const Eigen::Quaterniond ee_des_ori_base = get_quaternion(ee_frame);
-
-    const Eigen::Vector3d vee_base     = get_linear_vel(ee_frame);
-    const Eigen::Vector3d wee_base     = get_angular_vel(ee_frame);
-    const Eigen::Vector3d vee_des_base = _des_vel.head<3>();
-    const Eigen::Vector3d wee_des_base = _des_vel.tail<3>();
-
-    const Eigen::Vector3d pos_err_base = ee_des_pos_base - ee_pos_base;
-    const Eigen::Vector3d ori_err_base
-            = quat_logarithmic_map(ee_ori_base * ee_des_ori_base.inverse());
-
-    const Eigen::Vector3d vel_err_base   = vee_des_base - vee_base;
-    const Eigen::Vector3d omega_err_base = wee_des_base - wee_base;
-
-
-    const Transform3d base_to_compliance
-            = compute_transform(base_frame, compliance_frame);
-    const Eigen::Matrix3d R = base_to_compliance.rotation();
-
-    const Eigen::Vector3d pos_err = R * pos_err_base;
-    const Eigen::Vector3d ori_err = R * ori_err_base;
-    const Eigen::Vector3d vee     = R * vel_err_base;
-    const Eigen::Vector3d wee     = R * omega_err_base;
-
-
-
-    _ee_vel = stack_vector(vee, wee);
-    const ctrl::Vector6D x_tilde = stack_vector(pos_err, ori_err);
-    const ctrl::Vector6D xd_tilde = stack_vector(vee, wee);
 
     static int i = 0;
     if(i % 1000 == 0){
-        std::cout << "======================= " << i << " =======================\n";
-        std::cout << "ee link id: " << _ee_link_idx << std::endl;
-        std::cout << "ee pos: " << ee_pos_base.transpose() << std::endl;
-        std::cout << "ee rot: \n" << ee_ori_base.toRotationMatrix() << std::endl;
     }
 
     i++;
@@ -863,18 +823,6 @@ void CartesianAdaptiveComplianceController::_updateStiffness() {
 void CartesianAdaptiveComplianceController::_updateDamping() {
     _D = 2.0 * _K.diagonal().cwiseSqrt().asDiagonal();
     // _D = 0.02 * _K.diagonal().cwiseSqrt().asDiagonal();
-}
-
-KDL::FrameVel CartesianAdaptiveComplianceController::_getFrameWithVelocity(
-        const int& frame_idx
-) const {
-    KDL::Frame frame;
-    KDL::FrameVel frame_vel;
-    _kin_solver->JntToCart(_joint_data, frame_vel, -1);
-    // Base::m_forward_kinematics_solver->JntToCart(_joint_data.q, frame, "probe");
-    // frame_vel.p.p = frame.p;
-    // frame_vel.M.R = frame.M;
-    return frame_vel;
 }
 
 #include <pluginlib/class_list_macros.hpp>

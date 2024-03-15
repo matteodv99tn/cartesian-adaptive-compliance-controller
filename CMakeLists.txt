@@ -21,6 +21,7 @@ find_package(cartesian_controller_base REQUIRED)
 find_package(cartesian_motion_controller REQUIRED)
 find_package(cartesian_force_controller REQUIRED)
 find_package(cartesian_compliance_controller REQUIRED)
+find_package(pinocchio REQUIRED)
 
 
 # Convenience variable for dependencies
@@ -62,8 +63,12 @@ target_include_directories(${PROJECT_NAME}
     $<INSTALL_INTERFACE:include>
   PRIVATE
     ${EIGEN3_INCLUDE_DIR}
+    ${PINOCCHIO_INCLUDE_DIRS}
 )
-target_link_libraries(${PROJECT_NAME} qpOASES)
+target_link_libraries(${PROJECT_NAME} qpOASES ${PINOCCHIO_LIBRARIES})
+target_compile_definitions(${PROJECT_NAME} PUBLIC ${PINOCCHIO_DEFINITIONS})
+target_compile_options(${PROJECT_NAME} PRIVATE ${pinocchio_cxx_flags})
+target_compile_options(${PROJECT_NAME} PRIVATE ${PINOCCHIO_CFLAGS_OTHER})
 
 ament_target_dependencies(${PROJECT_NAME}
         ${${PROJECT_NAME}_EXPORTED_TARGETS}

@@ -547,13 +547,16 @@ void CartesianAdaptiveComplianceController::logParameters() const {
 }
 
 void CartesianAdaptiveComplianceController::_synchroniseJointVelocities() {
+    _q.resize(_joint_state_vel_handles.size());
+    _qd.resize(_joint_state_vel_handles.size());
     for (std::size_t i = 0; i < _joint_state_vel_handles.size(); ++i) {
         _joint_velocities(i) = _joint_state_vel_handles[i].get().get_value();
         _qd(i)               = _joint_velocities(i);
         _q(i)                = Base::m_joint_state_pos_handles[i].get().get_value();
     }
-    _joint_data.q    = _q;
-    _joint_data.qdot = _qd;
+    
+    // _joint_data.q    = _q;
+    // _joint_data.qdot = _qd;
 }
 
 void CartesianAdaptiveComplianceController::_initializeVariables() {
@@ -691,6 +694,12 @@ void CartesianAdaptiveComplianceController::_updateStiffness() {
             = compute_transform(base_frame, compliance_frame);
     const Eigen::Matrix3d R = base_to_compliance.rotation();
 
+    static bool tmp = true;
+    if(true){
+        std::cout << R << "\n-----------------------------------------\n";
+        tmp = false;
+    }
+
     const Eigen::Vector3d pos_err = R * pos_err_base;
     const Eigen::Vector3d ori_err = R * ori_err_base;
     const Eigen::Vector3d vee     = R * vel_err_base;
@@ -790,22 +799,22 @@ void CartesianAdaptiveComplianceController::_updateStiffness() {
 
     // Log the data
 #ifdef LOGGING
-    _logfile->print("{},", _t);
-    _logfile->print("{},", _x_tank);
-    _logfile->print("{},", dx_tank);
-    _logfile->print("{},", _tankEnergy());
-    _logfile->print("{},", sigma);
-    log_vector<6>(*_logfile, _K.diagonal());
-    log_vector<6>(*_logfile, x_tilde);
-    log_vector<6>(*_logfile, xd_tilde);
-    log_vector<3>(*_logfile, pos_curr);
-    log_vector<4>(*_logfile, quat_curr.coeffs());
-    log_vector<3>(*_logfile, pos_des);
-    log_vector<4>(*_logfile, quat_des.coeffs());
-    log_vector<6>(*_logfile, xd);
-    log_vector<6>(*_logfile, _des_vel);
-    log_vector<6>(*_logfile, _des_wrench);
-    _logfile->print("\n");
+   //_logfile->print("{},", _t);
+   // _logfile->print("{},", _x_tank);
+   // _logfile->print("{},", dx_tank);
+   // _logfile->print("{},", _tankEnergy());
+   // _logfile->print("{},", sigma);
+   // log_vector<6>(*_logfile, _K.diagonal());
+   // log_vector<6>(*_logfile, x_tilde);
+   // log_vector<6>(*_logfile, xd_tilde);
+   // log_vector<3>(*_logfile, pos_curr);
+   // log_vector<4>(*_logfile, quat_curr.coeffs());
+   // log_vector<3>(*_logfile, pos_des);
+   // log_vector<4>(*_logfile, quat_des.coeffs());
+   // log_vector<6>(*_logfile, xd);
+   // log_vector<6>(*_logfile, _des_vel);
+   // log_vector<6>(*_logfile, _des_wrench);
+   // _logfile->print("\n");
 #endif
 
     Float64MultiArray tank_state_msg;

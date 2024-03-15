@@ -14,11 +14,15 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <Eigen/Geometry>
+#include <Eigen/src/Core/Matrix.h>
 #include <iostream>
 #include <memory>
+#include <new>
 #include <utility>
 #include <vector>
 
+#include <kdl/treefksolverpos_recursive.hpp>
 #include <std_msgs/msg/detail/float64_multi_array__struct.hpp>
 
 #include "cartesian_controller_base/Utility.h"
@@ -44,6 +48,8 @@
 using cartesian_adaptive_compliance_controller::CartesianAdaptiveComplianceController;
 using rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface;
 using std_msgs::msg::Float64MultiArray;
+
+using Transform3d = Eigen::Transform<double, 3, Eigen::Affine>;
 
 namespace defaults {
 const std::string         target_velocity_topic = "/target_velocity";
@@ -107,6 +113,58 @@ void log_vector_heading(Stream& stream, const std::string& prefix) {
     );
 }
 #endif
+
+
+int get_segment_number(const KDL::Chain& chain, const std::string segment_name) {
+    for (unsigned int i = 0; i < chain.getNrOfSegments(); i++) {
+        if (chain.getSegment(i).getName() == segment_name) { return i; }
+    }
+    return -1;
+}
+
+Eigen::Vector3d get_position(const KDL::FrameVel& frame) {
+    return {frame.p.p.x(), frame.p.p.y(), frame.p.p.z()};
+}
+
+Eigen::Vector3d get_position(const KDL::Frame& frame) {
+    return {frame.p.x(), frame.p.y(), frame.p.z()};
+}
+
+Eigen::Quaterniond get_quaternion(const KDL::FrameVel& frame) {
+    Eigen::Quaterniond quat;
+    frame.M.R.GetQuaternion(quat.x(), quat.y(), quat.z(), quat.w());
+    return quat;
+}
+
+Eigen::Quaterniond get_quaternion(const KDL::Frame& frame) {
+    Eigen::Quaterniond quat;
+    frame.M.GetQuaternion(quat.x(), quat.y(), quat.z(), quat.w());
+    return quat;
+}
+
+Eigen::Vector3d get_linear_vel(const KDL::FrameVel& frame) {
+    return {frame.p.v.x(), frame.p.v.y(), frame.p.v.z()};
+}
+
+Eigen::Vector3d get_angular_vel(const KDL::FrameVel& frame) {
+    return {frame.M.w.x(), frame.M.w.y(), frame.M.w.z()};
+}
+
+Transform3d compute_transform(const KDL::FrameVel& from, const KDL::FrameVel& to) {
+    const Eigen::Vector3d    from_pos = get_position(from);
+    const Eigen::Vector3d    to_pos   = get_position(to);
+    const Eigen::Quaterniond from_ori = get_quaternion(from);
+    const Eigen::Quaterniond to_ori   = get_quaternion(to);
+
+    Transform3d from_transform, to_transform;
+    from_transform = Eigen::Translation3d(from_pos) * from_ori;
+    to_transform   = Eigen::Translation3d(to_pos) * to_ori;
+    return to_transform.inverse() * from_transform;
+}
+
+ctrl::Vector6D stack_vector(const Eigen::Vector3d& v1, const Eigen::Vector3d& v2) {
+    return ctrl::Vector6D({v1(0), v1(1), v1(2), v2(0), v2(1), v2(2)});
+}
 
 const Eigen::Vector3d quat_logarithmic_map(const Eigen::Quaterniond& q) {
     const Eigen::Quaterniond q_normalized = q.normalized();
@@ -211,6 +269,8 @@ CartesianAdaptiveComplianceController::on_configure(
     _dxtilde_pub = get_node()->create_publisher<Float64MultiArray>(
             "/log/dxtilde", rclcpp::QoS(10).transient_local()
     );
+    _q.resize(Base::m_joint_state_pos_handles.size());
+    _qd.resize(Base::m_joint_state_pos_handles.size());
 
     return LifecycleNodeInterface::CallbackReturn::SUCCESS;
 }
@@ -311,7 +371,7 @@ CartesianAdaptiveComplianceController::on_deactivate(
 }
 
 #if defined CARTESIAN_CONTROLLERS_GALACTIC || defined CARTESIAN_CONTROLLERS_HUMBLE     \
-        || defined CARTESIAN_CONTROLLERS_IRON
+        || defined                                    CARTESIAN_CONTROLLERS_IRON
 controller_interface::return_type CartesianAdaptiveComplianceController::update(
         const rclcpp::Time& time, const rclcpp::Duration& period
 ) {
@@ -414,6 +474,7 @@ void CartesianAdaptiveComplianceController::logParameters() const {
             _R(4, 4),
             _R(5, 5)
     );
+#ifdef LOGGING
     _configfile->print(
             "R weights: {}, {}, {}, {}, {}, {}\n",
             _R(0, 0),
@@ -482,12 +543,17 @@ void CartesianAdaptiveComplianceController::logParameters() const {
     _configfile->print(
             "Tank eta: {}\n", get_node()->get_parameter("tank.eta").as_double()
     );
+#endif
 }
 
 void CartesianAdaptiveComplianceController::_synchroniseJointVelocities() {
     for (std::size_t i = 0; i < _joint_state_vel_handles.size(); ++i) {
         _joint_velocities(i) = _joint_state_vel_handles[i].get().get_value();
+        _qd(i)               = _joint_velocities(i);
+        _q(i)                = Base::m_joint_state_pos_handles[i].get().get_value();
     }
+    _joint_data.q    = _q;
+    _joint_data.qdot = _qd;
 }
 
 void CartesianAdaptiveComplianceController::_initializeVariables() {
@@ -566,6 +632,16 @@ void CartesianAdaptiveComplianceController::_initializeVariables() {
     }
     _F_min = ctrl::Vector6D(F_min.data());
     _F_max = ctrl::Vector6D(F_max.data());
+
+    const std::string base_link
+            = get_node()->get_parameter("robot_base_link").as_string();
+    const std::string ee_link
+            = get_node()->get_parameter("end_effector_link").as_string();
+    const std::string compliance_link
+            = get_node()->get_parameter("compliance_ref_link").as_string();
+    _base_link_idx       = get_segment_number(Base::m_robot_chain, base_link);
+    _ee_link_idx         = get_segment_number(Base::m_robot_chain, ee_link);
+    _compliance_link_idx = get_segment_number(Base::m_robot_chain, compliance_link);
 }
 
 void CartesianAdaptiveComplianceController::_initializeQpProblem() {
@@ -588,43 +664,42 @@ void CartesianAdaptiveComplianceController::_updateStiffness() {
     // TODO: fill values of the qp variables
 
     // Variable preparation
-    KDL::FrameVel        frame_vel = _getEndEffectorFrameVel();
-    const ctrl::Vector3D pos_curr{// Current position
-                                  frame_vel.p.p.x(),
-                                  frame_vel.p.p.y(),
-                                  frame_vel.p.p.z()
-    };
-    Eigen::Quaterniond   quat_curr;
-    frame_vel.M.R.GetQuaternion(
-            quat_curr.x(), quat_curr.y(), quat_curr.z(), quat_curr.w()
-    );
+    KDL::FrameVel ee_frame         = _getFrameWithVelocity(_ee_link_idx);
+    KDL::FrameVel compliance_frame = _getFrameWithVelocity(_compliance_link_idx);
+    KDL::FrameVel base_frame       = _getFrameWithVelocity(_base_link_idx);
+    KDL::Frame    target           = MotionBase::m_target_frame;
 
-    const ctrl::Vector6D xd{// Current velocity
-                            frame_vel.p.v.x(),
-                            frame_vel.p.v.y(),
-                            frame_vel.p.v.z(),
-                            frame_vel.M.w.x(),
-                            frame_vel.M.w.y(),
-                            frame_vel.M.w.z()
-    };
-    _ee_vel = xd;
+    const Eigen::Vector3d    ee_pos_base     = get_position(ee_frame);
+    const Eigen::Quaterniond ee_ori_base     = get_quaternion(ee_frame);
+    const Eigen::Vector3d    ee_des_pos_base = get_position(target);
+    const Eigen::Quaterniond ee_des_ori_base = get_quaternion(ee_frame);
 
-    const ctrl::Vector3D pos_des{// Desired position
-                                 MotionBase::m_target_frame.p.x(),
-                                 MotionBase::m_target_frame.p.y(),
-                                 MotionBase::m_target_frame.p.z()
-    };
-    Eigen::Quaterniond   quat_des;
-    MotionBase::m_target_frame.M.GetQuaternion(
-            quat_des.x(), quat_des.y(), quat_des.z(), quat_des.w()
-    );
+    const Eigen::Vector3d vee_base     = get_linear_vel(ee_frame);
+    const Eigen::Vector3d wee_base     = get_angular_vel(ee_frame);
+    const Eigen::Vector3d vee_des_base = _des_vel.head<3>();
+    const Eigen::Vector3d wee_des_base = _des_vel.tail<3>();
 
-    ctrl::Vector6D x_tilde;  // pos tracking error
-    x_tilde.head<3>() = pos_curr - pos_des;
-    // x_tilde.head<3>() = pos_des - pos_curr;
-    x_tilde.tail<3>() = quat_logarithmic_map(quat_curr * quat_des.inverse());
-    const ctrl::Vector6D xd_tilde = xd - _des_vel;
-    // const ctrl::Vector6D xd_tilde = _des_vel - xd;
+    const Eigen::Vector3d pos_err_base = ee_des_pos_base - ee_pos_base;
+    const Eigen::Vector3d ori_err_base
+            = quat_logarithmic_map(ee_ori_base * ee_des_ori_base.inverse());
+
+    const Eigen::Vector3d vel_err_base   = vee_des_base - vee_base;
+    const Eigen::Vector3d omega_err_base = wee_des_base - wee_base;
+
+
+    const Transform3d base_to_compliance
+            = compute_transform(base_frame, compliance_frame);
+    const Eigen::Matrix3d R = base_to_compliance.rotation();
+
+    const Eigen::Vector3d pos_err = R * pos_err_base;
+    const Eigen::Vector3d ori_err = R * ori_err_base;
+    const Eigen::Vector3d vee     = R * vel_err_base;
+    const Eigen::Vector3d wee     = R * omega_err_base;
+
+
+    _ee_vel = stack_vector(vee, wee);
+    const ctrl::Vector6D x_tilde = stack_vector(pos_err, ori_err);
+    const ctrl::Vector6D xd_tilde = stack_vector(vee, wee);
 
     const ctrl::Matrix6D X_tilde
             = x_tilde.asDiagonal();  // pos tracking error diag matrix
@@ -763,6 +838,8 @@ void CartesianAdaptiveComplianceController::_updateStiffness() {
     _xtilde_pub->publish(xtilde_msg);
     _dxtilde_pub->publish(dxtilde_msg);
 
+    m_stiffness = ctrl::Matrix6D::Zero();
+
     _t += _dt;
 }
 
@@ -771,17 +848,11 @@ void CartesianAdaptiveComplianceController::_updateDamping() {
     // _D = 0.02 * _K.diagonal().cwiseSqrt().asDiagonal();
 }
 
-KDL::FrameVel CartesianAdaptiveComplianceController::_getEndEffectorFrameVel() const {
-    KDL::JntArray q(Base::m_joint_state_pos_handles.size());
-    KDL::JntArray q_dot(Base::m_joint_state_pos_handles.size());
-    for (std::size_t i = 0; i < Base::m_joint_state_pos_handles.size(); ++i) {
-        q(i)     = Base::m_joint_state_pos_handles[i].get().get_value();
-        q_dot(i) = _joint_velocities(i);
-    }
-
-    KDL::FrameVel    frame_vel;
-    KDL::JntArrayVel joint_data(q, q_dot);
-    _kin_solver->JntToCart(joint_data, frame_vel);
+KDL::FrameVel CartesianAdaptiveComplianceController::_getFrameWithVelocity(
+        const int& frame_idx
+) const {
+    KDL::FrameVel frame_vel;
+    _kin_solver->JntToCart(_joint_data, frame_vel, frame_idx);
     return frame_vel;
 }
 

@@ -110,7 +110,7 @@ private:
      * @brief Returns the end-effector frame velocity
      *
      */
-    KDL::FrameVel _getEndEffectorFrameVel() const;
+    KDL::FrameVel _getFrameWithVelocity(const int& link_idx) const;
 
     /**
      * @brief Computes the compliance error for the forward dynamic solver
@@ -162,7 +162,13 @@ private:
     ctrl::Matrix6D _K;            // Stiffness matrix
     ctrl::Vector6D _Kmin, _Kmax;  // min/max diag. elems
     ctrl::Vector6D _F_min, _F_max;
+
     std::unique_ptr<KDL::ChainFkSolverVel_recursive> _kin_solver;
+    KDL::JntArray _q, _qd;
+    KDL::JntArrayVel _joint_data;
+    int _base_link_idx;
+    int _ee_link_idx;
+    int _compliance_link_idx;
 
     double inline _tankEnergy() const { return 0.5 * _x_tank * _x_tank; };
 

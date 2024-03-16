@@ -554,7 +554,7 @@ void CartesianAdaptiveComplianceController::_synchroniseJointVelocities() {
         _qd(i)               = _joint_velocities(i);
         _q(i)                = Base::m_joint_state_pos_handles[i].get().get_value();
     }
-    
+
     // _joint_data.q    = _q;
     // _joint_data.qdot = _qd;
 }
@@ -694,22 +694,28 @@ void CartesianAdaptiveComplianceController::_updateStiffness() {
             = compute_transform(base_frame, compliance_frame);
     const Eigen::Matrix3d R = base_to_compliance.rotation();
 
-    static bool tmp = true;
-    if(true){
-        std::cout << R << "\n-----------------------------------------\n";
-        tmp = false;
-    }
-
     const Eigen::Vector3d pos_err = R * pos_err_base;
     const Eigen::Vector3d ori_err = R * ori_err_base;
     const Eigen::Vector3d vee     = R * vel_err_base;
     const Eigen::Vector3d wee     = R * omega_err_base;
 
 
+
     _ee_vel = stack_vector(vee, wee);
     const ctrl::Vector6D x_tilde = stack_vector(pos_err, ori_err);
     const ctrl::Vector6D xd_tilde = stack_vector(vee, wee);
 
+    static int i = 0;
+    if(i % 1000 == 0){
+        std::cout << "======================= " << i << " =======================\n";
+        std::cout << "ee link id: " << _ee_link_idx << std::endl;
+        std::cout << "ee pos: " << ee_pos_base.transpose() << std::endl;
+        std::cout << "ee rot: \n" << ee_ori_base.toRotationMatrix() << std::endl;
+    }
+
+    i++;
+
+    /*
     const ctrl::Matrix6D X_tilde
             = x_tilde.asDiagonal();  // pos tracking error diag matrix
     const ctrl::Matrix6D Xd_tilde = xd_tilde.asDiagonal();
@@ -846,8 +852,10 @@ void CartesianAdaptiveComplianceController::_updateStiffness() {
     _damping_pub->publish(damping_msg);
     _xtilde_pub->publish(xtilde_msg);
     _dxtilde_pub->publish(dxtilde_msg);
+    */
 
     m_stiffness = ctrl::Matrix6D::Zero();
+    m_stiffness = ctrl::Vector6D(100, 100, 100, 10, 10, 10).asDiagonal();
 
     _t += _dt;
 }
@@ -860,8 +868,12 @@ void CartesianAdaptiveComplianceController::_updateDamping() {
 KDL::FrameVel CartesianAdaptiveComplianceController::_getFrameWithVelocity(
         const int& frame_idx
 ) const {
+    KDL::Frame frame;
     KDL::FrameVel frame_vel;
-    _kin_solver->JntToCart(_joint_data, frame_vel, frame_idx);
+    _kin_solver->JntToCart(_joint_data, frame_vel, -1);
+    // Base::m_forward_kinematics_solver->JntToCart(_joint_data.q, frame, "probe");
+    // frame_vel.p.p = frame.p;
+    // frame_vel.M.R = frame.M;
     return frame_vel;
 }
 

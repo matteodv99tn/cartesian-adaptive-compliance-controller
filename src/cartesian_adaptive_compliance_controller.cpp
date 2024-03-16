@@ -30,10 +30,11 @@
 #include "controller_interface/helpers.hpp"
 #include "geometry_msgs/msg/twist_stamped.hpp"
 #include "hardware_interface/types/hardware_interface_type_values.hpp"
+#include "pinocchio/algorithm/frames.hpp"
+#include "pinocchio/algorithm/kinematics.hpp"
 #include "pinocchio/multibody/data.hpp"
 #include "pinocchio/multibody/fwd.hpp"
 #include "pinocchio/multibody/model.hpp"
-#include "pinocchio/algorithm/kinematics.hpp"
 #include "pinocchio/parsers/urdf.hpp"
 #include "qpOASES.hpp"
 #include "qpOASES/MessageHandling.hpp"
@@ -348,12 +349,14 @@ CartesianAdaptiveComplianceController::on_activate(
     }
 
     _joint_velocities = ctrl::VectorND::Zero(joints.size());
-    pinocchio::urdf::buildModel(get_node()->get_parameter("robot_description").as_string(),
-                                _pin_model);
+    pinocchio::urdf::buildModelFromXML(
+            get_node()->get_parameter("robot_description").as_string(), _pin_model
+    );
     _pin_data = pinocchio::Data(_pin_model);
 
     _base_link_name = get_node()->get_parameter("robot_base_link").as_string();
-    _compliance_link_name = get_node()->get_parameter("compliance_ref_link").as_string();
+    _compliance_link_name
+            = get_node()->get_parameter("compliance_ref_link").as_string();
     _ee_link_name = get_node()->get_parameter("end_effector_link").as_string();
 
     _dt = get_node()->get_parameter("sampling_period").as_double();
@@ -560,6 +563,8 @@ void CartesianAdaptiveComplianceController::_synchronisePinocchioModel() {
         q(i)                 = Base::m_joint_state_pos_handles[i].get().get_value();
     }
     pinocchio::forwardKinematics(_pin_model, _pin_data, q, _joint_velocities);
+    _q = q;
+    _qd = _joint_velocities;
 }
 
 void CartesianAdaptiveComplianceController::_initializeVariables() {
@@ -645,9 +650,6 @@ void CartesianAdaptiveComplianceController::_initializeVariables() {
             = get_node()->get_parameter("end_effector_link").as_string();
     const std::string compliance_link
             = get_node()->get_parameter("compliance_ref_link").as_string();
-    _base_link_idx       = get_segment_number(Base::m_robot_chain, base_link);
-    _ee_link_idx         = get_segment_number(Base::m_robot_chain, ee_link);
-    _compliance_link_idx = get_segment_number(Base::m_robot_chain, compliance_link);
 }
 
 void CartesianAdaptiveComplianceController::_initializeQpProblem() {
@@ -668,11 +670,30 @@ void CartesianAdaptiveComplianceController::_initializeQpProblem() {
 
 void CartesianAdaptiveComplianceController::_updateStiffness() {
 
+    pinocchio::forwardKinematics(_pin_model, _pin_data, _q, _qd);
+    pinocchio::updateFramePlacements(_pin_model, _pin_data);
+
+    int frame_id = _pin_model.getFrameId("tool0");
+    int max_id = _pin_model.frames.size();
+    // pinocchio::SE3 frame = pinocchio::updateFramePlacement(_pin_model, _pin_data, frame_id);
+    pinocchio::SE3 frame = _pin_data.oMf[frame_id];
+
+
 
     static int i = 0;
-    if(i % 1000 == 0){
+    if (i % 100000 == 0) {
+        std::cout << "=================================\n";
+        std::cout << "q: " << _q.transpose() << std::endl;
+        std::cout << "qd: " << _qd.transpose() << std::endl;
+        std::cout << "Frame id: " << frame_id << std::endl;
+        std::cout << frame << std::endl;
+        if (frame_id == max_id) {
+            std::cout << "Frame id is max id" << std::endl;
+            for (int j = 0; j < max_id; j++) {
+                std::cout << "Frame " << j << ": " << _pin_model.frames[j].name << std::endl;
+            }
+        }
     }
-
     i++;
 
     /*

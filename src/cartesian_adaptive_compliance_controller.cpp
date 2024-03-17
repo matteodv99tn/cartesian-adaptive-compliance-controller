@@ -119,10 +119,12 @@ Vector6d rotate_6d_vec(const std::optional<pinocchio::SE3> RF, const Vector6d& v
     return rotate_6d_vec(RF.value_or(pinocchio::SE3::Identity()).rotation(), vec);
 }
 
-const Vector3d quat_logarithmic_map(const Quaternion& q) {
-    const Quaternion q_normalized = q.normalized();
-    const Vector3d   u            = q_normalized.vec();
-    const double     nu           = q_normalized.w();
+const Vector3d quat_logarithmic_map(Quaternion q) {
+    q.normalize();
+    if (q.w() < 0) q.coeffs() = -q.coeffs();
+
+    const Vector3d u  = q.vec();
+    const double   nu = q.w();
 
     if (u.norm() < 1e-9) return Vector3d::Zero();
     else return std::acos(nu) * u.normalized();
@@ -472,13 +474,16 @@ bool CartesianAdaptiveComplianceController::_update_stiffness() {
     using pinocchio::SE3;
     pinocchio::updateFramePlacements(_pin_model, _pin_data);
     const SE3& ee_frame         = _pin_data.oMf[_ee_link_id];
+    const SE3& base_frame       = _pin_data.oMf[_base_link_id];
     const SE3& compliance_frame = _pin_data.oMf[_compliance_link_id];
 
     const SE3 world_to_compliance = compliance_frame.inverse();
 
     // Get the current and desired position and orientation (in world frame)
-    const Vector3d   target_pos = get_position(MotionBase::m_target_frame);
-    const Quaternion target_ori = get_quaternion(MotionBase::m_target_frame);
+    const Vector3d   target_pos_base = get_position(MotionBase::m_target_frame);
+    const Quaternion target_ori_base = get_quaternion(MotionBase::m_target_frame);
+    const Vector3d   target_pos      = base_frame.act(target_pos_base);
+    const Quaternion target_ori = Quaternion(base_frame.rotation()) * target_ori_base;
     const Vector3d   curr_pos   = ee_frame.translation();
     const Quaternion curr_ori(ee_frame.rotation());
 
@@ -539,7 +544,7 @@ bool CartesianAdaptiveComplianceController::_update_stiffness() {
     const double T     = _tankEnergy();
     const double Tmin  = get_node()->get_parameter("tank.minimum_energy").as_double();
     const double sigma = (T <= 1.0) ? 1.0 : 0.0;
-    const double eta = get_node()->get_parameter("tank.eta").as_double();
+    const double eta   = get_node()->get_parameter("tank.eta").as_double();
 
     const double k_tmp1 = sigma * xd_tilde.transpose() * _D * xd_tilde;
     const double k_tmp2 = x_tilde.transpose() * _Kmin.asDiagonal() * xd_tilde;
@@ -582,18 +587,16 @@ bool CartesianAdaptiveComplianceController::_update_stiffness() {
 
 
     if (qp_solve_status != qpOASES::SUCCESSFUL_RETURN) {
-#if 0
         if (qp_solve_status == -2) {
             RCLCPP_ERROR(get_node()->get_logger(), "Unfeasible QP (err. code %d)", ret);
         } else {
             RCLCPP_ERROR(
                     get_node()->get_logger(),
-                    "QP solver failed with code %d, init code: %d",
+                    "QP solver failed with code %d, init code1 %d",
                     qp_solve_status,
                     ret
             );
         }
-#endif
     } else {
         // Update the stiffness matrix
         _K = _qp_x_sol.asDiagonal();

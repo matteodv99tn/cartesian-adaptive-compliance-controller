@@ -98,7 +98,7 @@ private:
      * parent class)
      *
      */
-    void _updateStiffness();
+    bool _updateStiffness();
 
     /**
      * @brief updates the damping matrix according to the current stiffness
@@ -145,6 +145,7 @@ private:
     pinocchio::Model _pin_model;
     pinocchio::Data  _pin_data;
     ctrl::Vector6D   _q, _qd;
+    int              _ee_link_id, _compliance_link_id, _base_link_id;
 
     std::string _base_link_name;
     std::string _ee_link_name;
@@ -171,6 +172,12 @@ private:
     rclcpp::Subscription<geometry_msgs::msg::WrenchStamped>::SharedPtr _wrench_sub;
     ctrl::Vector6D                                                     _des_vel;
     ctrl::Vector6D                                                     _des_wrench;
+    std::string                                                        _des_vel_link;
+    std::string                                                        _des_wrench_link;
+
+    void _onDesiredTwistReceived(const geometry_msgs::msg::TwistStamped::SharedPtr msg);
+    void _onDesiredWrenchReceived(const geometry_msgs::msg::WrenchStamped::SharedPtr msg
+    );
 
     ctrl::Vector6D _ee_vel;  // end-effector velocity
 

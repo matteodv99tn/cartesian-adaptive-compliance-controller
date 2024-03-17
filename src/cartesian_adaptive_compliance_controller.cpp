@@ -5,7 +5,7 @@
  *      mainly initialisation of publisher/subscribers (for both logging and control
  * purposes)
  * - update(): this must be changed for sure, since it implements the main control
- * algorithm see where we can call the parent class!
+ * algorithm sbase where we can call the parent class!
  *
  */
 
@@ -22,6 +22,8 @@
 #include <utility>
 #include <vector>
 
+#include <geometry_msgs/msg/detail/pose_stamped__struct.hpp>
+#include <geometry_msgs/msg/detail/twist_stamped__struct.hpp>
 #include <kdl/treefksolverpos_recursive.hpp>
 #include <std_msgs/msg/detail/float64_multi_array__struct.hpp>
 
@@ -169,6 +171,10 @@ ctrl::Vector6D stack_vector(const Eigen::Vector3d& v1, const Eigen::Vector3d& v2
     return ctrl::Vector6D({v1(0), v1(1), v1(2), v2(0), v2(1), v2(2)});
 }
 
+ctrl::Vector6D rotate_6d_vec(const Eigen::Matrix3d& R, const ctrl::Vector6D& vec) {
+    return stack_vector(R * vec.head<3>(), R * vec.tail<3>());
+}
+
 const Eigen::Vector3d quat_logarithmic_map(const Eigen::Quaterniond& q) {
     const Eigen::Quaterniond q_normalized = q.normalized();
     const Eigen::Vector3d    u            = q_normalized.vec();
@@ -290,41 +296,19 @@ CartesianAdaptiveComplianceController::on_activate(
     }
 
     // Create subscription for desired velocity
-    _des_vel = decltype(_des_vel)::Zero();
-    auto on_target_velocity_received
-            = [this](geometry_msgs::msg::TwistStamped::SharedPtr msg) {
-                  this->_des_vel = ctrl::Vector6D(
-                          {msg->twist.linear.x,
-                           msg->twist.linear.y,
-                           msg->twist.linear.z,
-                           msg->twist.angular.x,
-                           msg->twist.angular.y,
-                           msg->twist.angular.z}
-                  );
-              };
+    _des_vel   = decltype(_des_vel)::Zero();
     _twist_sub = get_node()->create_subscription<geometry_msgs::msg::TwistStamped>(
             get_node()->get_parameter("target_velocity_topic").as_string(),
             10,
-            on_target_velocity_received
+            [this](const geometry_msgs::msg::TwistStamped::SharedPtr msg) { this->_onDesiredTwistReceived(msg); }
     );
 
     // Create subscription for desired wrench
     _des_wrench = decltype(_des_wrench)::Zero();
-    auto on_target_wrench_received
-            = [this](geometry_msgs::msg::WrenchStamped::SharedPtr msg) {
-                  this->_des_wrench = ctrl::Vector6D(
-                          {msg->wrench.force.x,
-                           msg->wrench.force.y,
-                           msg->wrench.force.z,
-                           msg->wrench.torque.x,
-                           msg->wrench.torque.y,
-                           msg->wrench.torque.z}
-                  );
-              };
     _wrench_sub = get_node()->create_subscription<geometry_msgs::msg::WrenchStamped>(
             get_node()->get_parameter("target_wrench_topic").as_string(),
             10,
-            on_target_wrench_received
+            [this](const geometry_msgs::msg::WrenchStamped::SharedPtr msg) { this->_onDesiredWrenchReceived(msg); }
     );
 
     // Configure velocity state interface
@@ -357,7 +341,10 @@ CartesianAdaptiveComplianceController::on_activate(
     _base_link_name = get_node()->get_parameter("robot_base_link").as_string();
     _compliance_link_name
             = get_node()->get_parameter("compliance_ref_link").as_string();
-    _ee_link_name = get_node()->get_parameter("end_effector_link").as_string();
+    _ee_link_name       = get_node()->get_parameter("end_effector_link").as_string();
+    _base_link_id       = _pin_model.getFrameId(_base_link_name);
+    _ee_link_id         = _pin_model.getFrameId(_ee_link_name);
+    _compliance_link_id = _pin_model.getFrameId(_compliance_link_name);
 
     _dt = get_node()->get_parameter("sampling_period").as_double();
     _t  = 0;
@@ -395,7 +382,7 @@ controller_interface::return_type CartesianAdaptiveComplianceController::update(
     // Synchronize the internal model and the real robot
     Base::m_ik_solver->synchronizeJointPositions(Base::m_joint_state_pos_handles);
     _synchronisePinocchioModel();
-    _updateStiffness();
+    if (!_updateStiffness()) return controller_interface::return_type::ERROR;
 
     // --- Same control loop of the cartesian compliance controller
     for (int i = 0; i < Base::m_iterations; ++i) {
@@ -550,7 +537,7 @@ void CartesianAdaptiveComplianceController::logParameters() const {
             "Tank minimum energy: {}\n",
             get_node()->get_parameter("tank.minimum_energy").as_double()
     );
-    _configfile->print(
+    _configfile->printworld(
             "Tank eta: {}\n", get_node()->get_parameter("tank.eta").as_double()
     );
 #endif
@@ -563,7 +550,7 @@ void CartesianAdaptiveComplianceController::_synchronisePinocchioModel() {
         q(i)                 = Base::m_joint_state_pos_handles[i].get().get_value();
     }
     pinocchio::forwardKinematics(_pin_model, _pin_data, q, _joint_velocities);
-    _q = q;
+    _q  = q;
     _qd = _joint_velocities;
 }
 
@@ -643,13 +630,6 @@ void CartesianAdaptiveComplianceController::_initializeVariables() {
     }
     _F_min = ctrl::Vector6D(F_min.data());
     _F_max = ctrl::Vector6D(F_max.data());
-
-    const std::string base_link
-            = get_node()->get_parameter("robot_base_link").as_string();
-    const std::string ee_link
-            = get_node()->get_parameter("end_effector_link").as_string();
-    const std::string compliance_link
-            = get_node()->get_parameter("compliance_ref_link").as_string();
 }
 
 void CartesianAdaptiveComplianceController::_initializeQpProblem() {
@@ -668,16 +648,46 @@ void CartesianAdaptiveComplianceController::_initializeQpProblem() {
     _qp_x_sol = decltype(_qp_x_sol)::Zero();
 }
 
-void CartesianAdaptiveComplianceController::_updateStiffness() {
-
-    pinocchio::forwardKinematics(_pin_model, _pin_data, _q, _qd);
+bool CartesianAdaptiveComplianceController::_updateStiffness() {
     pinocchio::updateFramePlacements(_pin_model, _pin_data);
+    const pinocchio::SE3& ee_frame         = _pin_data.oMf[_ee_link_id];
+    const pinocchio::SE3& base_frame       = _pin_data.oMf[_base_link_id];
+    const pinocchio::SE3& compliance_frame = _pin_data.oMf[_compliance_link_id];
 
-    int frame_id = _pin_model.getFrameId("tool0");
-    int max_id = _pin_model.frames.size();
-    // pinocchio::SE3 frame = pinocchio::updateFramePlacement(_pin_model, _pin_data, frame_id);
-    pinocchio::SE3 frame = _pin_data.oMf[frame_id];
+    const pinocchio::SE3 world_to_compliance = compliance_frame.inverse();
 
+    const Eigen::Vector3d    target_pos = get_position(MotionBase::m_target_frame);
+    const Eigen::Quaterniond target_ori = get_quaternion(MotionBase::m_target_frame);
+    const Eigen::Vector3d    curr_pos   = ee_frame.translation();
+    const Eigen::Quaterniond curr_ori(ee_frame.rotation());
+
+    const Eigen::Vector3d pos_err = target_pos - curr_pos;
+    const Eigen::Vector3d ori_err
+            = quat_logarithmic_map(target_ori * curr_ori.conjugate());
+
+    ctrl::Vector6D x_tilde;
+    x_tilde.head<3>() = world_to_compliance.rotation() * pos_err;
+    x_tilde.tail<3>() = world_to_compliance.rotation() * ori_err;
+
+    const ctrl::Vector6D _ee_vel_world = pinocchio::getFrameVelocity(
+            _pin_model, _pin_data, _ee_link_id, pinocchio::WORLD
+    );
+    const auto des_vel_link_id = _pin_model.getFrameId(_des_vel_link);
+    if (des_vel_link_id == _pin_model.frames.size()) {
+        RCLCPP_ERROR(
+                get_node()->get_logger(),
+                "Desired velocity frame %s not found",
+                _des_vel_link.c_str()
+        );
+        return false;
+    }
+    const pinocchio::SE3& des_vel_frame = _pin_data.oMf[des_vel_link_id];
+    const ctrl::Vector6D  _des_vel_world
+            = rotate_6d_vec(des_vel_frame.rotation(), _des_vel);
+
+    const ctrl::Vector6D xd_tilde = rotate_6d_vec(
+            world_to_compliance.rotation(), _des_vel_world - _ee_vel_world
+    );
 
 
     static int i = 0;
@@ -685,18 +695,12 @@ void CartesianAdaptiveComplianceController::_updateStiffness() {
         std::cout << "=================================\n";
         std::cout << "q: " << _q.transpose() << std::endl;
         std::cout << "qd: " << _qd.transpose() << std::endl;
-        std::cout << "Frame id: " << frame_id << std::endl;
-        std::cout << frame << std::endl;
-        if (frame_id == max_id) {
-            std::cout << "Frame id is max id" << std::endl;
-            for (int j = 0; j < max_id; j++) {
-                std::cout << "Frame " << j << ": " << _pin_model.frames[j].name << std::endl;
-            }
-        }
+        std::cout << "Base frame:\n" << base_frame << std::endl;
+        std::cout << "EE frame:\n" << ee_frame << std::endl;
+        std::cout << "Compliance frame:\n" << compliance_frame << std::endl;
     }
     i++;
 
-    /*
     const ctrl::Matrix6D X_tilde
             = x_tilde.asDiagonal();  // pos tracking error diag matrix
     const ctrl::Matrix6D Xd_tilde = xd_tilde.asDiagonal();
@@ -734,7 +738,6 @@ void CartesianAdaptiveComplianceController::_updateStiffness() {
     _qp_A_ub.topRows<6>()       = _F_max - d;
     _qp_A_lb.bottomRows<3>()    = Eigen::Vector3d({-1e9, -1e9, k3});
     _qp_A_ub.bottomRows<3>()    = Eigen::Vector3d({k1, k2, 1e9});
-    // _qp_A_ub.bottomRows<2>() = 1e9 * Eigen::Vector2d::Ones();
 
 
     // Solve the QP problem:
@@ -833,17 +836,45 @@ void CartesianAdaptiveComplianceController::_updateStiffness() {
     _damping_pub->publish(damping_msg);
     _xtilde_pub->publish(xtilde_msg);
     _dxtilde_pub->publish(dxtilde_msg);
-    */
 
     m_stiffness = ctrl::Matrix6D::Zero();
     m_stiffness = ctrl::Vector6D(100, 100, 100, 10, 10, 10).asDiagonal();
 
     _t += _dt;
+    return true;
 }
 
 void CartesianAdaptiveComplianceController::_updateDamping() {
     _D = 2.0 * _K.diagonal().cwiseSqrt().asDiagonal();
     // _D = 0.02 * _K.diagonal().cwiseSqrt().asDiagonal();
+}
+
+void CartesianAdaptiveComplianceController::_onDesiredTwistReceived(
+        const geometry_msgs::msg::TwistStamped::SharedPtr msg
+) {
+    _des_vel = ctrl::Vector6D(
+            msg->twist.linear.x,
+            msg->twist.linear.y,
+            msg->twist.linear.z,
+            msg->twist.angular.x,
+            msg->twist.angular.y,
+            msg->twist.angular.z
+    );
+    _des_vel_link = msg->header.frame_id;
+}
+
+void CartesianAdaptiveComplianceController::_onDesiredWrenchReceived(
+        const geometry_msgs::msg::WrenchStamped::SharedPtr msg
+) {
+    _des_wrench = ctrl::Vector6D(
+            msg->wrench.force.x,
+            msg->wrench.force.y,
+            msg->wrench.force.z,
+            msg->wrench.torque.x,
+            msg->wrench.torque.y,
+            msg->wrench.torque.z
+    );
+    _des_wrench_link = msg->header.frame_id;
 }
 
 #include <pluginlib/class_list_macros.hpp>

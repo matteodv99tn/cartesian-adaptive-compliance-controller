@@ -20,10 +20,6 @@
 #include "rclcpp_lifecycle/node_interfaces/lifecycle_node_interface.hpp"
 #include "std_msgs/msg/float64_multi_array.hpp"
 
-#ifdef LOGGING
-#include "fmt/os.h"
-#endif
-
 namespace cartesian_adaptive_compliance_controller {
 
 template <int ROWS = Eigen::Dynamic, int COLS = Eigen::Dynamic>
@@ -35,8 +31,6 @@ using QpVector = Eigen::Matrix<qpOASES::real_t, SIZE, 1>;
 class CartesianAdaptiveComplianceController
         : public cartesian_compliance_controller::CartesianComplianceController {
 public:
-    CartesianAdaptiveComplianceController();
-    ~CartesianAdaptiveComplianceController();
 
     // Note:
     // This way the controller won't work with the Foxy version of ROS2
@@ -51,16 +45,8 @@ public:
     rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn
     on_deactivate(const rclcpp_lifecycle::State& previous_state) override;
 
-
-    // clang-format off
-#if defined CARTESIAN_CONTROLLERS_GALACTIC || defined CARTESIAN_CONTROLLERS_HUMBLE ||  \
-        defined                                       CARTESIAN_CONTROLLERS_IRON
     controller_interface::return_type
     update(const rclcpp::Time& time, const rclcpp::Duration& period) override;
-#elif defined CARTESIAN_CONTROLLERS_FOXY
-    controller_interface::return_type update() override;
-#endif
-    // clang-format on
 
     void logParameters() const;
 
@@ -186,11 +172,6 @@ private:
     rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr _damping_pub;
     rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr _xtilde_pub;
     rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr _dxtilde_pub;
-
-#ifdef LOGGING
-    std::unique_ptr<fmt::v8::ostream> _logfile;
-    std::unique_ptr<fmt::v8::ostream> _configfile;
-#endif
 };
 
 }  // namespace cartesian_adaptive_compliance_controller

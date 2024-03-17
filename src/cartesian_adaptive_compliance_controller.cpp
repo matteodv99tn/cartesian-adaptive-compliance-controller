@@ -103,12 +103,12 @@ Quaternion get_quaternion(const KDL::Frame& frame) {
     return quat;
 }
 
-Vector6d stack_vector(const Vector3d& v1, const Vector3d& v2) {
+Vector6d stack_vectors(const Vector3d& v1, const Vector3d& v2) {
     return Vector6d({v1(0), v1(1), v1(2), v2(0), v2(1), v2(2)});
 }
 
 Vector6d rotate_6d_vec(const Matrix3d& R, const Vector6d& vec) {
-    return stack_vector(R * vec.head<3>(), R * vec.tail<3>());
+    return stack_vectors(R * vec.head<3>(), R * vec.tail<3>());
 }
 
 Vector6d rotate_6d_vec(const pinocchio::SE3& RF, const Vector6d& vec) {
@@ -191,6 +191,8 @@ CartesianAdaptiveComplianceController::on_configure(
     );
     _q.resize(Base::m_joint_state_pos_handles.size());
     _qd.resize(Base::m_joint_state_pos_handles.size());
+    _des_vel_link    = "world";
+    _des_wrench_link = "world";
 
     return LifecycleNodeInterface::CallbackReturn::SUCCESS;
 }
@@ -264,7 +266,6 @@ CartesianAdaptiveComplianceController::on_activate(
 
     _dt = get_node()->get_parameter("sampling_period").as_double();
     _t  = 0;
-    logParameters();
     return LifecycleNodeInterface::CallbackReturn::SUCCESS;
 }
 
@@ -471,55 +472,73 @@ bool CartesianAdaptiveComplianceController::_update_stiffness() {
     using pinocchio::SE3;
     pinocchio::updateFramePlacements(_pin_model, _pin_data);
     const SE3& ee_frame         = _pin_data.oMf[_ee_link_id];
-    const SE3& base_frame       = _pin_data.oMf[_base_link_id];
     const SE3& compliance_frame = _pin_data.oMf[_compliance_link_id];
 
     const SE3 world_to_compliance = compliance_frame.inverse();
 
+    // Get the current and desired position and orientation (in world frame)
     const Vector3d   target_pos = get_position(MotionBase::m_target_frame);
     const Quaternion target_ori = get_quaternion(MotionBase::m_target_frame);
     const Vector3d   curr_pos   = ee_frame.translation();
     const Quaternion curr_ori(ee_frame.rotation());
 
+    // Cartesian error (in world frame)
     const Vector3d pos_err = target_pos - curr_pos;
     const Vector3d ori_err = quat_logarithmic_map(target_ori * curr_ori.conjugate());
 
-    Vector6d x_tilde;
-    x_tilde.head<3>() = world_to_compliance.rotation() * pos_err;
-    x_tilde.tail<3>() = world_to_compliance.rotation() * ori_err;
+    // Transform the error to the compliance frame
+    const Vector6d x_tilde
+            = rotate_6d_vec(world_to_compliance, stack_vectors(pos_err, ori_err));
 
-    const Vector6d _ee_vel_world = pinocchio::getFrameVelocity(
+    // EE velocity in world frame
+    const Vector6d ee_vel_world = pinocchio::getFrameVelocity(
             _pin_model, _pin_data, _ee_link_id, pinocchio::WORLD
     );
-    const auto des_vel_link_id = _pin_model.getFrameId(_des_vel_link);
-    if (des_vel_link_id == _pin_model.frames.size()) {
-        RCLCPP_ERROR(
+    // Compute desired velocity in world frame
+    const auto     des_vel_frame = get_frame(_pin_model, _pin_data, _des_vel_link);
+    const Vector6d des_vel_world = rotate_6d_vec(des_vel_frame, _des_vel);
+    if (!des_vel_frame.has_value()) {
+        // Notify the user that the desired velocity frame was not found
+        RCLCPP_WARN_THROTTLE(
                 get_node()->get_logger(),
-                "Desired velocity frame %s not found",
+                *get_node()->get_clock(),
+                1000,
+                "Desired velocity frame (%s) not found",
                 _des_vel_link.c_str()
         );
-        return false;
     }
-    const pinocchio::SE3& des_vel_frame = _pin_data.oMf[des_vel_link_id];
-    const Vector6d _des_vel_world = rotate_6d_vec(des_vel_frame.rotation(), _des_vel);
 
+    // Cartesian velocity error (in compliance frame)
     const Vector6d xd_tilde = rotate_6d_vec(
-            world_to_compliance.rotation(), _des_vel_world - _ee_vel_world
+            world_to_compliance.rotation(), des_vel_world - ee_vel_world
     );
 
-    const Matrix6d X_tilde
-            = x_tilde.asDiagonal();  // pos tracking error diag matrix
+    // Project desired wrench to compliance frame
+    const auto des_wrench_frame = get_frame(_pin_model, _pin_data, _des_wrench_link);
+    const Vector6d des_wrench_world = rotate_6d_vec(des_wrench_frame, _des_wrench);
+    const Vector6d des_wrench
+            = rotate_6d_vec(world_to_compliance.rotation(), des_wrench_world);
+    if (!des_wrench_frame.has_value()) {
+        RCLCPP_WARN_THROTTLE(
+                get_node()->get_logger(),
+                *get_node()->get_clock(),
+                1000,
+                "Desired wrench frame (%s) not found",
+                _des_wrench_link.c_str()
+        );
+    }
+
+    const Matrix6d X_tilde  = x_tilde.asDiagonal();  // pos tracking error diag matrix
     const Matrix6d Xd_tilde = xd_tilde.asDiagonal();
 
     const Vector6d d = _D * xd_tilde;
-    const Vector6d f = d - _des_wrench;
+    const Vector6d f = d - des_wrench;
 
     const Vector6d A_bot_row = -Xd_tilde * x_tilde;
 
     const double T     = _tankEnergy();
     const double Tmin  = get_node()->get_parameter("tank.minimum_energy").as_double();
     const double sigma = (T <= 1.0) ? 1.0 : 0.0;
-    // const double sigma = 0;
     const double eta = get_node()->get_parameter("tank.eta").as_double();
 
     const double k_tmp1 = sigma * xd_tilde.transpose() * _D * xd_tilde;
@@ -563,6 +582,7 @@ bool CartesianAdaptiveComplianceController::_update_stiffness() {
 
 
     if (qp_solve_status != qpOASES::SUCCESSFUL_RETURN) {
+#if 0
         if (qp_solve_status == -2) {
             RCLCPP_ERROR(get_node()->get_logger(), "Unfeasible QP (err. code %d)", ret);
         } else {
@@ -573,26 +593,24 @@ bool CartesianAdaptiveComplianceController::_update_stiffness() {
                     ret
             );
         }
-        // Maybe set default values
-        // return;
-
+#endif
     } else {
         // Update the stiffness matrix
         _K = _qp_x_sol.asDiagonal();
-        // _K = _Kmin.asDiagonal();
         _update_damping();
         m_stiffness = _K;
     }
 
     // Integrate energy tank
     const Matrix6d Kmin = _Kmin.asDiagonal();
-    Vector6d             w    = -(_K - Kmin) * x_tilde;
+    Vector6d       w    = -(_K - Kmin) * x_tilde;
     if (T < Tmin) w = Vector6d::Zero();
     const double dx_tank_1 = sigma / _x_tank * xd_tilde.transpose() * _D * xd_tilde;
     const double dx_tank_2 = -(1 / _x_tank) * w.transpose() * xd_tilde;
     const double dx_tank   = dx_tank_1 + dx_tank_2;
     _x_tank += dx_tank * _dt;
 
+    // Log data
     Float64MultiArray tank_state_msg;
     Float64MultiArray stiffness_msg;
     Float64MultiArray damping_msg;

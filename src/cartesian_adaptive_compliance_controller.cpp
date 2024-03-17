@@ -45,6 +45,7 @@ using geometry_msgs::msg::WrenchStamped;
 using rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface;
 using std_msgs::msg::Float64MultiArray;
 
+using Quaternion  = Eigen::Quaterniond;
 using Transform3d = Eigen::Transform<double, 3, Eigen::Affine>;
 using Vector3d    = Eigen::Matrix<double, 3, 1>;
 using Vector6d    = Eigen::Matrix<double, 6, 1>;
@@ -96,24 +97,32 @@ Vector3d get_position(const KDL::Frame& frame) {
     return {frame.p.x(), frame.p.y(), frame.p.z()};
 }
 
-Eigen::Quaterniond get_quaternion(const KDL::Frame& frame) {
-    Eigen::Quaterniond quat;
+Quaternion get_quaternion(const KDL::Frame& frame) {
+    Quaternion quat;
     frame.M.GetQuaternion(quat.x(), quat.y(), quat.z(), quat.w());
     return quat;
 }
 
-Vector6d stack_vector(const Vector3d& v1, const Eigen::Vector3d& v2) {
+Vector6d stack_vector(const Vector3d& v1, const Vector3d& v2) {
     return Vector6d({v1(0), v1(1), v1(2), v2(0), v2(1), v2(2)});
 }
 
-Vector6d rotate_6d_vec(const Eigen::Matrix3d& R, const ctrl::Vector6D& vec) {
+Vector6d rotate_6d_vec(const Matrix3d& R, const Vector6d& vec) {
     return stack_vector(R * vec.head<3>(), R * vec.tail<3>());
 }
 
-const Vector3d quat_logarithmic_map(const Eigen::Quaterniond& q) {
-    const Eigen::Quaterniond q_normalized = q.normalized();
-    const Vector3d           u            = q_normalized.vec();
-    const double             nu           = q_normalized.w();
+Vector6d rotate_6d_vec(const pinocchio::SE3& RF, const Vector6d& vec) {
+    return rotate_6d_vec(RF.rotation(), vec);
+}
+
+Vector6d rotate_6d_vec(const std::optional<pinocchio::SE3> RF, const Vector6d& vec) {
+    return rotate_6d_vec(RF.value_or(pinocchio::SE3::Identity()).rotation(), vec);
+}
+
+const Vector3d quat_logarithmic_map(const Quaternion& q) {
+    const Quaternion q_normalized = q.normalized();
+    const Vector3d   u            = q_normalized.vec();
+    const double     nu           = q_normalized.w();
 
     if (u.norm() < 1e-9) return Vector3d::Zero();
     else return std::acos(nu) * u.normalized();
@@ -459,17 +468,18 @@ void CartesianAdaptiveComplianceController::_initialize_qp_problem() {
 // |_|  \__,_|_| |_|\___|\__|_|\___/|_| |_|
 //
 bool CartesianAdaptiveComplianceController::_update_stiffness() {
+    using pinocchio::SE3;
     pinocchio::updateFramePlacements(_pin_model, _pin_data);
-    const pinocchio::SE3& ee_frame         = _pin_data.oMf[_ee_link_id];
-    const pinocchio::SE3& base_frame       = _pin_data.oMf[_base_link_id];
-    const pinocchio::SE3& compliance_frame = _pin_data.oMf[_compliance_link_id];
+    const SE3& ee_frame         = _pin_data.oMf[_ee_link_id];
+    const SE3& base_frame       = _pin_data.oMf[_base_link_id];
+    const SE3& compliance_frame = _pin_data.oMf[_compliance_link_id];
 
-    const pinocchio::SE3 world_to_compliance = compliance_frame.inverse();
+    const SE3 world_to_compliance = compliance_frame.inverse();
 
-    const Vector3d           target_pos = get_position(MotionBase::m_target_frame);
-    const Eigen::Quaterniond target_ori = get_quaternion(MotionBase::m_target_frame);
-    const Vector3d           curr_pos   = ee_frame.translation();
-    const Eigen::Quaterniond curr_ori(ee_frame.rotation());
+    const Vector3d   target_pos = get_position(MotionBase::m_target_frame);
+    const Quaternion target_ori = get_quaternion(MotionBase::m_target_frame);
+    const Vector3d   curr_pos   = ee_frame.translation();
+    const Quaternion curr_ori(ee_frame.rotation());
 
     const Vector3d pos_err = target_pos - curr_pos;
     const Vector3d ori_err = quat_logarithmic_map(target_ori * curr_ori.conjugate());
@@ -497,9 +507,9 @@ bool CartesianAdaptiveComplianceController::_update_stiffness() {
             world_to_compliance.rotation(), _des_vel_world - _ee_vel_world
     );
 
-    const ctrl::Matrix6D X_tilde
+    const Matrix6d X_tilde
             = x_tilde.asDiagonal();  // pos tracking error diag matrix
-    const ctrl::Matrix6D Xd_tilde = xd_tilde.asDiagonal();
+    const Matrix6d Xd_tilde = xd_tilde.asDiagonal();
 
     const Vector6d d = _D * xd_tilde;
     const Vector6d f = d - _des_wrench;
@@ -575,7 +585,7 @@ bool CartesianAdaptiveComplianceController::_update_stiffness() {
     }
 
     // Integrate energy tank
-    const ctrl::Matrix6D Kmin = _Kmin.asDiagonal();
+    const Matrix6d Kmin = _Kmin.asDiagonal();
     Vector6d             w    = -(_K - Kmin) * x_tilde;
     if (T < Tmin) w = Vector6d::Zero();
     const double dx_tank_1 = sigma / _x_tank * xd_tilde.transpose() * _D * xd_tilde;
@@ -613,7 +623,7 @@ bool CartesianAdaptiveComplianceController::_update_stiffness() {
     _xtilde_pub->publish(xtilde_msg);
     _dxtilde_pub->publish(dxtilde_msg);
 
-    m_stiffness = ctrl::Matrix6D::Zero();
+    m_stiffness = Matrix6d::Zero();
     m_stiffness = Vector6d(100, 100, 100, 10, 10, 10).asDiagonal();
 
     _t += _dt;

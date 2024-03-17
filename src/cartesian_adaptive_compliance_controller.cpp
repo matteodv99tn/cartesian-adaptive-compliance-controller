@@ -14,18 +14,18 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <Eigen/Dense>
 #include <Eigen/Geometry>
-#include <Eigen/src/Core/Matrix.h>
 #include <iostream>
 #include <memory>
-#include <new>
-#include <utility>
+#include <optional>
 #include <vector>
 
 #include "cartesian_controller_base/Utility.h"
 #include "controller_interface/controller_interface_base.hpp"
 #include "controller_interface/helpers.hpp"
 #include "geometry_msgs/msg/twist_stamped.hpp"
+#include "geometry_msgs/msg/wrench_stamped.hpp"
 #include "hardware_interface/types/hardware_interface_type_values.hpp"
 #include "pinocchio/algorithm/frames.hpp"
 #include "pinocchio/algorithm/kinematics.hpp"
@@ -40,10 +40,16 @@
 #include "std_msgs/msg/float64_multi_array.hpp"
 
 using cartesian_adaptive_compliance_controller::CartesianAdaptiveComplianceController;
+using geometry_msgs::msg::TwistStamped;
+using geometry_msgs::msg::WrenchStamped;
 using rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface;
 using std_msgs::msg::Float64MultiArray;
 
 using Transform3d = Eigen::Transform<double, 3, Eigen::Affine>;
+using Vector3d    = Eigen::Matrix<double, 3, 1>;
+using Vector6d    = Eigen::Matrix<double, 6, 1>;
+using Matrix3d    = Eigen::Matrix<double, 3, 3>;
+using Matrix6d    = Eigen::Matrix<double, 6, 6>;
 
 namespace defaults {
 const std::string         target_velocity_topic = "/target_velocity";
@@ -60,7 +66,6 @@ const std::vector<double> K_min     = {300.0, 300.0, 100.0, 30.0, 30.0, 30.0};
 const std::vector<double> K_max     = {1000.0, 1000.0, 1000.0, 100.0, 100.0, 100.0};
 }  // namespace defaults
 
-
 //  _   _      _                   _____
 // | | | | ___| |_ __   ___ _ __  |  ___|   _ _ __   ___ ___
 // | |_| |/ _ \ | '_ \ / _ \ '__| | |_ | | | | '_ \ / __/ __|
@@ -69,7 +74,25 @@ const std::vector<double> K_max     = {1000.0, 1000.0, 1000.0, 100.0, 100.0, 100
 //              |_|
 // Helper functions
 
-Eigen::Vector3d get_position(const KDL::Frame& frame) {
+std::optional<pinocchio::FrameIndex> get_frame_id(
+        const pinocchio::Model& model, const std::string& frame_name
+) {
+    const auto frame_id = model.getFrameId(frame_name);
+    if (frame_id == model.frames.size()) return std::nullopt;
+    return frame_id;
+}
+
+std::optional<pinocchio::SE3> get_frame(
+        const pinocchio::Model& model,
+        const pinocchio::Data&  data,
+        const std::string&      frame_name
+) {
+    auto frame_id = get_frame_id(model, frame_name);
+    if (!frame_id) return std::nullopt;
+    return data.oMf[frame_id.value()];
+}
+
+Vector3d get_position(const KDL::Frame& frame) {
     return {frame.p.x(), frame.p.y(), frame.p.z()};
 }
 
@@ -79,23 +102,22 @@ Eigen::Quaterniond get_quaternion(const KDL::Frame& frame) {
     return quat;
 }
 
-ctrl::Vector6D stack_vector(const Eigen::Vector3d& v1, const Eigen::Vector3d& v2) {
-    return ctrl::Vector6D({v1(0), v1(1), v1(2), v2(0), v2(1), v2(2)});
+Vector6d stack_vector(const Vector3d& v1, const Eigen::Vector3d& v2) {
+    return Vector6d({v1(0), v1(1), v1(2), v2(0), v2(1), v2(2)});
 }
 
-ctrl::Vector6D rotate_6d_vec(const Eigen::Matrix3d& R, const ctrl::Vector6D& vec) {
+Vector6d rotate_6d_vec(const Eigen::Matrix3d& R, const ctrl::Vector6D& vec) {
     return stack_vector(R * vec.head<3>(), R * vec.tail<3>());
 }
 
-const Eigen::Vector3d quat_logarithmic_map(const Eigen::Quaterniond& q) {
+const Vector3d quat_logarithmic_map(const Eigen::Quaterniond& q) {
     const Eigen::Quaterniond q_normalized = q.normalized();
-    const Eigen::Vector3d    u            = q_normalized.vec();
+    const Vector3d           u            = q_normalized.vec();
     const double             nu           = q_normalized.w();
 
-    if (u.norm() < 1e-9) return Eigen::Vector3d::Zero();
+    if (u.norm() < 1e-9) return Vector3d::Zero();
     else return std::acos(nu) * u.normalized();
 }
-
 
 //  _   _           _        _     _  __                      _
 // | \ | | ___   __| | ___  | |   (_)/ _| ___  ___ _   _  ___| | ___
@@ -139,13 +161,9 @@ CartesianAdaptiveComplianceController::on_configure(
         return parent_ret;
     }
 
-    // TODO: add custom configuration
-
-    // Configure velocity state interface
-
     // Initialisation of the variables
-    _initializeVariables();
-    _initializeQpProblem();
+    _initialize_variables();
+    _initialize_qp_problem();
 
     _tank_state_pub = get_node()->create_publisher<Float64MultiArray>(
             "/log/tank_state", rclcpp::QoS(10).transient_local()
@@ -181,18 +199,22 @@ CartesianAdaptiveComplianceController::on_activate(
 
     // Create subscription for desired velocity
     _des_vel   = decltype(_des_vel)::Zero();
-    _twist_sub = get_node()->create_subscription<geometry_msgs::msg::TwistStamped>(
+    _twist_sub = get_node()->create_subscription<TwistStamped>(
             get_node()->get_parameter("target_velocity_topic").as_string(),
             10,
-            [this](const geometry_msgs::msg::TwistStamped::SharedPtr msg) { this->_onDesiredTwistReceived(msg); }
+            [this](const TwistStamped::SharedPtr msg) {
+                this->_onDesiredTwistReceived(msg);
+            }
     );
 
     // Create subscription for desired wrench
     _des_wrench = decltype(_des_wrench)::Zero();
-    _wrench_sub = get_node()->create_subscription<geometry_msgs::msg::WrenchStamped>(
+    _wrench_sub = get_node()->create_subscription<WrenchStamped>(
             get_node()->get_parameter("target_wrench_topic").as_string(),
             10,
-            [this](const geometry_msgs::msg::WrenchStamped::SharedPtr msg) { this->_onDesiredWrenchReceived(msg); }
+            [this](const WrenchStamped::SharedPtr msg) {
+                this->_onDesiredWrenchReceived(msg);
+            }
     );
 
     // Configure velocity state interface
@@ -216,7 +238,8 @@ CartesianAdaptiveComplianceController::on_activate(
         return LifecycleNodeInterface::CallbackReturn::ERROR;
     }
 
-    _joint_velocities = ctrl::VectorND::Zero(joints.size());
+    _q  = Eigen::VectorXd::Zero(joints.size());
+    _qd = Eigen::VectorXd::Zero(joints.size());
     pinocchio::urdf::buildModelFromXML(
             get_node()->get_parameter("robot_description").as_string(), _pin_model
     );
@@ -260,14 +283,14 @@ controller_interface::return_type CartesianAdaptiveComplianceController::update(
 
     // Synchronize the internal model and the real robot
     Base::m_ik_solver->synchronizeJointPositions(Base::m_joint_state_pos_handles);
-    _synchronisePinocchioModel();
-    if (!_updateStiffness()) return controller_interface::return_type::ERROR;
+    _synchronise_pinocchio_model();
+    if (!_update_stiffness()) return controller_interface::return_type::ERROR;
 
     // --- Same control loop of the cartesian compliance controller
     for (int i = 0; i < Base::m_iterations; ++i) {
-        auto           internal_period = rclcpp::Duration::from_seconds(0.02);
-        ctrl::Vector6D error
-                = CartesianAdaptiveComplianceController::computeComplianceError();
+        auto     internal_period = rclcpp::Duration::from_seconds(0.02);
+        Vector6d error
+                = CartesianAdaptiveComplianceController::_compute_compliance_error();
         Base::computeJointControlCmds(error, internal_period);
     }
     Base::writeJointControlCmds();
@@ -275,37 +298,76 @@ controller_interface::return_type CartesianAdaptiveComplianceController::update(
     return controller_interface::return_type::OK;
 }
 
-ctrl::Vector6D CartesianAdaptiveComplianceController::computeComplianceError() {
-    ctrl::Vector6D net_force =
-            Base::displayInBaseLink(m_stiffness, m_compliance_ref_link)
-                    * MotionBase::computeMotionError()
-            - Base::displayInBaseLink(_D, m_compliance_ref_link) * _ee_vel
-            + ForceBase::computeForceError();
+//  __  __                _
+// |  \/  | ___ _ __ ___ | |__   ___ _ __
+// | |\/| |/ _ \ '_ ` _ \| '_ \ / _ \ '__|
+// | |  | |  __/ | | | | | |_) |  __/ |
+// |_|  |_|\___|_| |_| |_|_.__/ \___|_|
+//
+//   __                  _   _
+//  / _|_   _ _ __   ___| |_(_) ___  _ __  ___
+// | |_| | | | '_ \ / __| __| |/ _ \| '_ \/ __|
+// |  _| |_| | | | | (__| |_| | (_) | | | \__ \
+// |_|  \__,_|_| |_|\___|\__|_|\___/|_| |_|___/
+//
+void CartesianAdaptiveComplianceController::_update_damping() {
+    _D = 2.0 * _K.diagonal().cwiseSqrt().asDiagonal();
+    // _D = 0.02 * _K.diagonal().cwiseSqrt().asDiagonal();
+}
+
+void CartesianAdaptiveComplianceController::_onDesiredTwistReceived(
+        const TwistStamped::SharedPtr msg
+) {
+    _des_vel = Vector6d(
+            msg->twist.linear.x,
+            msg->twist.linear.y,
+            msg->twist.linear.z,
+            msg->twist.angular.x,
+            msg->twist.angular.y,
+            msg->twist.angular.z
+    );
+    _des_vel_link = msg->header.frame_id;
+}
+
+void CartesianAdaptiveComplianceController::_onDesiredWrenchReceived(
+        const WrenchStamped::SharedPtr msg
+) {
+    _des_wrench = Vector6d(
+            msg->wrench.force.x,
+            msg->wrench.force.y,
+            msg->wrench.force.z,
+            msg->wrench.torque.x,
+            msg->wrench.torque.y,
+            msg->wrench.torque.z
+    );
+    _des_wrench_link = msg->header.frame_id;
+}
+
+Vector6d CartesianAdaptiveComplianceController::_compute_compliance_error() {
+    Vector6d net_force = Base::displayInBaseLink(m_stiffness, m_compliance_ref_link)
+                                 * MotionBase::computeMotionError()
+                         - Base::displayInBaseLink(_D, m_compliance_ref_link) * _ee_vel
+                         + ForceBase::computeForceError();
     return net_force;
 }
 
-void CartesianAdaptiveComplianceController::_synchronisePinocchioModel() {
-    Eigen::VectorXd q = Eigen::VectorXd::Zero(_pin_model.nq);
+void CartesianAdaptiveComplianceController::_synchronise_pinocchio_model() {
     for (std::size_t i = 0; i < _joint_state_vel_handles.size(); ++i) {
-        _joint_velocities(i) = _joint_state_vel_handles[i].get().get_value();
-        q(i)                 = Base::m_joint_state_pos_handles[i].get().get_value();
+        _q(i)  = Base::m_joint_state_pos_handles[i].get().get_value();
+        _qd(i) = _joint_state_vel_handles[i].get().get_value();
     }
-    pinocchio::forwardKinematics(_pin_model, _pin_data, q, _joint_velocities);
-    _q  = q;
-    _qd = _joint_velocities;
+    pinocchio::forwardKinematics(_pin_model, _pin_data, _q, _qd);
 }
 
-void CartesianAdaptiveComplianceController::_initializeVariables() {
+void CartesianAdaptiveComplianceController::_initialize_variables() {
     // Tank initialisation
     _x_tank = get_node()->get_parameter("tank.initial_state").as_double();
 
     // Minimum and maximum stiffness
     std::vector<double> Kmin_vals
             = get_node()->get_parameter("Qp.K_min").as_double_array();
-    std::cout << "Loaded Kmin" << std::endl;
     std::vector<double> Kmax_vals
             = get_node()->get_parameter("Qp.K_max").as_double_array();
-    std::cout << "Loaded Kmax" << std::endl;
     if (Kmin_vals.size() != 6) {
         RCLCPP_WARN(
                 get_node()->get_logger(),
@@ -320,17 +382,15 @@ void CartesianAdaptiveComplianceController::_initializeVariables() {
         );
         Kmax_vals = defaults::K_max;
     }
-    _Kmin = ctrl::Vector6D(Kmin_vals.data());
-    _Kmax = ctrl::Vector6D(Kmax_vals.data());
+    _Kmin = Vector6d(Kmin_vals.data());
+    _Kmax = Vector6d(Kmax_vals.data());
     _K    = _Kmin.asDiagonal();
-    _updateDamping();
+    _update_damping();
     m_stiffness = _Kmin.asDiagonal();
 
     // Weight matrices for the QP problem
     auto Q_weights = get_node()->get_parameter("Qp.Q_weights").as_double_array();
-    std::cout << "Loaded Q weights" << std::endl;
     auto R_weights = get_node()->get_parameter("Qp.R_weights").as_double_array();
-    std::cout << "Loaded R weights" << std::endl;
     if (Q_weights.size() != 6) {
         RCLCPP_WARN(
                 get_node()->get_logger(),
@@ -345,14 +405,11 @@ void CartesianAdaptiveComplianceController::_initializeVariables() {
         );
         R_weights = defaults::R_weights;
     }
-    _Q = ctrl::Vector6D(Q_weights.data()).asDiagonal();
-    _R = ctrl::Vector6D(R_weights.data()).asDiagonal();
+    _Q = Vector6d(Q_weights.data()).asDiagonal();
+    _R = Vector6d(R_weights.data()).asDiagonal();
 
-    // Force limits
     auto F_min = get_node()->get_parameter("Qp.F_min").as_double_array();
-    std::cout << "Loaded F_min" << std::endl;
     auto F_max = get_node()->get_parameter("Qp.F_max").as_double_array();
-    std::cout << "Loaded F_max" << std::endl;
     if (F_min.size() != 6) {
         RCLCPP_WARN(
                 get_node()->get_logger(),
@@ -369,11 +426,11 @@ void CartesianAdaptiveComplianceController::_initializeVariables() {
         );
         F_max = defaults::F_max;
     }
-    _F_min = ctrl::Vector6D(F_min.data());
-    _F_max = ctrl::Vector6D(F_max.data());
+    _F_min = Vector6d(F_min.data());
+    _F_max = Vector6d(F_max.data());
 }
 
-void CartesianAdaptiveComplianceController::_initializeQpProblem() {
+void CartesianAdaptiveComplianceController::_initialize_qp_problem() {
     qpOASES::Options options;
     options.printLevel = qpOASES::PL_NONE;
     _qp_prob           = qpOASES::QProblem(nv, nc);
@@ -389,7 +446,19 @@ void CartesianAdaptiveComplianceController::_initializeQpProblem() {
     _qp_x_sol = decltype(_qp_x_sol)::Zero();
 }
 
-bool CartesianAdaptiveComplianceController::_updateStiffness() {
+//  __  __       _              _        _
+// |  \/  | __ _(_)_ __     ___| |_ _ __| |
+// | |\/| |/ _` | | '_ \   / __| __| '__| |
+// | |  | | (_| | | | | | | (__| |_| |  | |
+// |_|  |_|\__,_|_|_| |_|  \___|\__|_|  |_|
+//
+//   __                  _   _
+//  / _|_   _ _ __   ___| |_(_) ___  _ __
+// | |_| | | | '_ \ / __| __| |/ _ \| '_ \
+// |  _| |_| | | | | (__| |_| | (_) | | | |
+// |_|  \__,_|_| |_|\___|\__|_|\___/|_| |_|
+//
+bool CartesianAdaptiveComplianceController::_update_stiffness() {
     pinocchio::updateFramePlacements(_pin_model, _pin_data);
     const pinocchio::SE3& ee_frame         = _pin_data.oMf[_ee_link_id];
     const pinocchio::SE3& base_frame       = _pin_data.oMf[_base_link_id];
@@ -397,20 +466,19 @@ bool CartesianAdaptiveComplianceController::_updateStiffness() {
 
     const pinocchio::SE3 world_to_compliance = compliance_frame.inverse();
 
-    const Eigen::Vector3d    target_pos = get_position(MotionBase::m_target_frame);
+    const Vector3d           target_pos = get_position(MotionBase::m_target_frame);
     const Eigen::Quaterniond target_ori = get_quaternion(MotionBase::m_target_frame);
-    const Eigen::Vector3d    curr_pos   = ee_frame.translation();
+    const Vector3d           curr_pos   = ee_frame.translation();
     const Eigen::Quaterniond curr_ori(ee_frame.rotation());
 
-    const Eigen::Vector3d pos_err = target_pos - curr_pos;
-    const Eigen::Vector3d ori_err
-            = quat_logarithmic_map(target_ori * curr_ori.conjugate());
+    const Vector3d pos_err = target_pos - curr_pos;
+    const Vector3d ori_err = quat_logarithmic_map(target_ori * curr_ori.conjugate());
 
-    ctrl::Vector6D x_tilde;
+    Vector6d x_tilde;
     x_tilde.head<3>() = world_to_compliance.rotation() * pos_err;
     x_tilde.tail<3>() = world_to_compliance.rotation() * ori_err;
 
-    const ctrl::Vector6D _ee_vel_world = pinocchio::getFrameVelocity(
+    const Vector6d _ee_vel_world = pinocchio::getFrameVelocity(
             _pin_model, _pin_data, _ee_link_id, pinocchio::WORLD
     );
     const auto des_vel_link_id = _pin_model.getFrameId(_des_vel_link);
@@ -423,33 +491,20 @@ bool CartesianAdaptiveComplianceController::_updateStiffness() {
         return false;
     }
     const pinocchio::SE3& des_vel_frame = _pin_data.oMf[des_vel_link_id];
-    const ctrl::Vector6D  _des_vel_world
-            = rotate_6d_vec(des_vel_frame.rotation(), _des_vel);
+    const Vector6d _des_vel_world = rotate_6d_vec(des_vel_frame.rotation(), _des_vel);
 
-    const ctrl::Vector6D xd_tilde = rotate_6d_vec(
+    const Vector6d xd_tilde = rotate_6d_vec(
             world_to_compliance.rotation(), _des_vel_world - _ee_vel_world
     );
-
-
-    static int i = 0;
-    if (i % 100000 == 0) {
-        std::cout << "=================================\n";
-        std::cout << "q: " << _q.transpose() << std::endl;
-        std::cout << "qd: " << _qd.transpose() << std::endl;
-        std::cout << "Base frame:\n" << base_frame << std::endl;
-        std::cout << "EE frame:\n" << ee_frame << std::endl;
-        std::cout << "Compliance frame:\n" << compliance_frame << std::endl;
-    }
-    i++;
 
     const ctrl::Matrix6D X_tilde
             = x_tilde.asDiagonal();  // pos tracking error diag matrix
     const ctrl::Matrix6D Xd_tilde = xd_tilde.asDiagonal();
 
-    const ctrl::Vector6D d = _D * xd_tilde;
-    const ctrl::Vector6D f = d - _des_wrench;
+    const Vector6d d = _D * xd_tilde;
+    const Vector6d f = d - _des_wrench;
 
-    const ctrl::Vector6D A_bot_row = -Xd_tilde * x_tilde;
+    const Vector6d A_bot_row = -Xd_tilde * x_tilde;
 
     const double T     = _tankEnergy();
     const double Tmin  = get_node()->get_parameter("tank.minimum_energy").as_double();
@@ -477,8 +532,8 @@ bool CartesianAdaptiveComplianceController::_updateStiffness() {
     _qp_x_ub                    = _Kmax;
     _qp_A_lb.topRows<6>()       = _F_min - d;
     _qp_A_ub.topRows<6>()       = _F_max - d;
-    _qp_A_lb.bottomRows<3>()    = Eigen::Vector3d({-1e9, -1e9, k3});
-    _qp_A_ub.bottomRows<3>()    = Eigen::Vector3d({k1, k2, 1e9});
+    _qp_A_lb.bottomRows<3>()    = Vector3d({-1e9, -1e9, k3});
+    _qp_A_ub.bottomRows<3>()    = Vector3d({k1, k2, 1e9});
 
 
     // Solve the QP problem:
@@ -515,14 +570,14 @@ bool CartesianAdaptiveComplianceController::_updateStiffness() {
         // Update the stiffness matrix
         _K = _qp_x_sol.asDiagonal();
         // _K = _Kmin.asDiagonal();
-        _updateDamping();
+        _update_damping();
         m_stiffness = _K;
     }
 
     // Integrate energy tank
     const ctrl::Matrix6D Kmin = _Kmin.asDiagonal();
-    ctrl::Vector6D       w    = -(_K - Kmin) * x_tilde;
-    if (T < Tmin) w = ctrl::Vector6D::Zero();
+    Vector6d             w    = -(_K - Kmin) * x_tilde;
+    if (T < Tmin) w = Vector6d::Zero();
     const double dx_tank_1 = sigma / _x_tank * xd_tilde.transpose() * _D * xd_tilde;
     const double dx_tank_2 = -(1 / _x_tank) * w.transpose() * xd_tilde;
     const double dx_tank   = dx_tank_1 + dx_tank_2;
@@ -559,43 +614,10 @@ bool CartesianAdaptiveComplianceController::_updateStiffness() {
     _dxtilde_pub->publish(dxtilde_msg);
 
     m_stiffness = ctrl::Matrix6D::Zero();
-    m_stiffness = ctrl::Vector6D(100, 100, 100, 10, 10, 10).asDiagonal();
+    m_stiffness = Vector6d(100, 100, 100, 10, 10, 10).asDiagonal();
 
     _t += _dt;
     return true;
-}
-
-void CartesianAdaptiveComplianceController::_updateDamping() {
-    _D = 2.0 * _K.diagonal().cwiseSqrt().asDiagonal();
-    // _D = 0.02 * _K.diagonal().cwiseSqrt().asDiagonal();
-}
-
-void CartesianAdaptiveComplianceController::_onDesiredTwistReceived(
-        const geometry_msgs::msg::TwistStamped::SharedPtr msg
-) {
-    _des_vel = ctrl::Vector6D(
-            msg->twist.linear.x,
-            msg->twist.linear.y,
-            msg->twist.linear.z,
-            msg->twist.angular.x,
-            msg->twist.angular.y,
-            msg->twist.angular.z
-    );
-    _des_vel_link = msg->header.frame_id;
-}
-
-void CartesianAdaptiveComplianceController::_onDesiredWrenchReceived(
-        const geometry_msgs::msg::WrenchStamped::SharedPtr msg
-) {
-    _des_wrench = ctrl::Vector6D(
-            msg->wrench.force.x,
-            msg->wrench.force.y,
-            msg->wrench.force.z,
-            msg->wrench.torque.x,
-            msg->wrench.torque.y,
-            msg->wrench.torque.z
-    );
-    _des_wrench_link = msg->header.frame_id;
 }
 
 #include <pluginlib/class_list_macros.hpp>

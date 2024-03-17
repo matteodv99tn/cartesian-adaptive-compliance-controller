@@ -31,7 +31,6 @@ using QpVector = Eigen::Matrix<qpOASES::real_t, SIZE, 1>;
 class CartesianAdaptiveComplianceController
         : public cartesian_compliance_controller::CartesianComplianceController {
 public:
-
     // Note:
     // This way the controller won't work with the Foxy version of ROS2
     virtual LifecycleNodeInterface::CallbackReturn on_init() override;
@@ -45,22 +44,22 @@ public:
     rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn
     on_deactivate(const rclcpp_lifecycle::State& previous_state) override;
 
-    controller_interface::return_type
-    update(const rclcpp::Time& time, const rclcpp::Duration& period) override;
+    controller_interface::return_type update(
+            const rclcpp::Time& time, const rclcpp::Duration& period
+    ) override;
 
     void logParameters() const;
 
 private:
     std::vector<std::reference_wrapper<hardware_interface::LoanedStateInterface>>
-                   _joint_state_vel_handles;
-    ctrl::VectorND _joint_velocities;
+            _joint_state_vel_handles;
 
     /**
      * @brief reads joint velocity state interfaces and updates the variable
      * _joint_velocities
      *
      */
-    void _synchronisePinocchioModel();
+    void _synchronise_pinocchio_model();
 
     /**
      * @brief Initialise some variables of the controller reading from the parameter
@@ -70,13 +69,13 @@ private:
      *  - minimum stiffness
      *
      */
-    void _initializeVariables();
+    void _initialize_variables();
 
     /**
      * @brief Initialize variables and solvers for the QP problem
      *
      */
-    void _initializeQpProblem();
+    void _initialize_qp_problem();
 
     /**
      * @brief fills the variable of the QP problem (based on the current state), solves
@@ -84,19 +83,19 @@ private:
      * parent class)
      *
      */
-    bool _updateStiffness();
+    bool _update_stiffness();
 
     /**
      * @brief updates the damping matrix according to the current stiffness
      *
      */
-    void _updateDamping();
+    void _update_damping();
 
     /**
      * @brief Computes the compliance error for the forward dynamic solver
      *
      */
-    ctrl::Vector6D computeComplianceError();
+    ctrl::Vector6D _compute_compliance_error();
 
 
     //   ___  ____    ____            _     _
@@ -130,7 +129,7 @@ private:
 
     pinocchio::Model _pin_model;
     pinocchio::Data  _pin_data;
-    ctrl::Vector6D   _q, _qd;
+    Eigen::VectorXd  _q, _qd;
     int              _ee_link_id, _compliance_link_id, _base_link_id;
 
     std::string _base_link_name;

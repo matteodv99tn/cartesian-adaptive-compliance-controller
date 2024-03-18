@@ -195,6 +195,7 @@ CartesianAdaptiveComplianceController::on_configure(
     _qd.resize(Base::m_joint_state_pos_handles.size());
     _des_vel_link    = "world";
     _des_wrench_link = "world";
+    _ee_vel          = decltype(_ee_vel)::Zero();
 
     return LifecycleNodeInterface::CallbackReturn::SUCCESS;
 }
@@ -227,6 +228,13 @@ CartesianAdaptiveComplianceController::on_activate(
             10,
             [this](const WrenchStamped::SharedPtr msg) {
                 this->_onDesiredWrenchReceived(msg);
+            }
+    );
+    _meas_wrench = decltype(_meas_wrench)::Zero();
+    _sensed_wrench_sub = get_node()->create_subscription<WrenchStamped>(
+            "/sensed_wrench", 10,
+            [this](const WrenchStamped::SharedPtr msg) {
+                _onSensedWrenchReceived(msg);
             }
     );
 
@@ -355,11 +363,34 @@ void CartesianAdaptiveComplianceController::_onDesiredWrenchReceived(
     _des_wrench_link = msg->header.frame_id;
 }
 
+void CartesianAdaptiveComplianceController::_onSensedWrenchReceived(
+        const WrenchStamped::SharedPtr msg
+) {
+    _meas_wrench = Vector6d(
+            msg->wrench.force.x,
+            msg->wrench.force.y,
+            msg->wrench.force.z,
+            msg->wrench.torque.x,
+            msg->wrench.torque.y,
+            msg->wrench.torque.z
+    );
+    _meas_wrench_link = msg->header.frame_id;
+}
+
 Vector6d CartesianAdaptiveComplianceController::_compute_compliance_error() {
-    Vector6d net_force = Base::displayInBaseLink(m_stiffness, m_compliance_ref_link)
-                                 * MotionBase::computeMotionError()
-                         - Base::displayInBaseLink(_D, m_compliance_ref_link) * _ee_vel
-                         + ForceBase::computeForceError();
+    const Vector6d force_error = ForceBase::computeForceError();
+    const Vector6d motion_error = Base::displayInBaseLink(m_stiffness, m_compliance_ref_link)
+                                 * MotionBase::computeMotionError();
+    const Vector6d damping_error = Base::displayInBaseLink(_D, m_compliance_ref_link)
+                                   * _ee_vel;
+
+    const Vector6d net_force = motion_error + force_error - damping_error;
+
+    // static int i = 0;
+    // if(i % 10000) {
+    //     std::cout << motion_error.transpose() << std::endl;
+    // }
+    // i++;
     return net_force;
 }
 
@@ -489,7 +520,7 @@ bool CartesianAdaptiveComplianceController::_update_stiffness() {
 
     // Cartesian error (in world frame)
     const Vector3d pos_err = target_pos - curr_pos;
-    const Vector3d ori_err = quat_logarithmic_map(target_ori * curr_ori.conjugate());
+    const Vector3d ori_err = quat_logarithmic_map(curr_ori * target_ori.conjugate());
 
     // Transform the error to the compliance frame
     const Vector6d x_tilde
@@ -643,9 +674,6 @@ bool CartesianAdaptiveComplianceController::_update_stiffness() {
     _damping_pub->publish(damping_msg);
     _xtilde_pub->publish(xtilde_msg);
     _dxtilde_pub->publish(dxtilde_msg);
-
-    m_stiffness = Matrix6d::Zero();
-    m_stiffness = Vector6d(100, 100, 100, 10, 10, 10).asDiagonal();
 
     _t += _dt;
     return true;

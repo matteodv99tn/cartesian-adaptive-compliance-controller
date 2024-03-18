@@ -155,13 +155,19 @@ private:
 
     rclcpp::Subscription<geometry_msgs::msg::TwistStamped>::SharedPtr  _twist_sub;
     rclcpp::Subscription<geometry_msgs::msg::WrenchStamped>::SharedPtr _wrench_sub;
-    ctrl::Vector6D                                                     _des_vel;
-    ctrl::Vector6D                                                     _des_wrench;
-    std::string                                                        _des_vel_link;
-    std::string                                                        _des_wrench_link;
+    rclcpp::Subscription<geometry_msgs::msg::WrenchStamped>::SharedPtr
+                   _sensed_wrench_sub;
+    ctrl::Vector6D _des_vel;
+    ctrl::Vector6D _des_wrench;
+    ctrl::Vector6D _meas_wrench;
+    std::string    _des_vel_link;
+    std::string    _des_wrench_link;
+    std::string    _meas_wrench_link;
 
     void _onDesiredTwistReceived(const geometry_msgs::msg::TwistStamped::SharedPtr msg);
     void _onDesiredWrenchReceived(const geometry_msgs::msg::WrenchStamped::SharedPtr msg
+    );
+    void _onSensedWrenchReceived(const geometry_msgs::msg::WrenchStamped::SharedPtr msg
     );
 
     ctrl::Vector6D _ee_vel;  // end-effector velocity

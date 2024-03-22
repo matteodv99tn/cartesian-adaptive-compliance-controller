@@ -24,6 +24,7 @@
 #include "cartesian_controller_base/Utility.h"
 #include "controller_interface/controller_interface_base.hpp"
 #include "controller_interface/helpers.hpp"
+#include "geometry_msgs/msg/twist.hpp"
 #include "geometry_msgs/msg/twist_stamped.hpp"
 #include "geometry_msgs/msg/wrench_stamped.hpp"
 #include "hardware_interface/types/hardware_interface_type_values.hpp"
@@ -37,12 +38,15 @@
 #include "qpOASES/MessageHandling.hpp"
 #include "rclcpp/logging.hpp"
 #include "rclcpp_lifecycle/node_interfaces/lifecycle_node_interface.hpp"
+#include "std_msgs/msg/float64.hpp"
 #include "std_msgs/msg/float64_multi_array.hpp"
 
 using cartesian_adaptive_compliance_controller::CartesianAdaptiveComplianceController;
+using geometry_msgs::msg::Twist;
 using geometry_msgs::msg::TwistStamped;
 using geometry_msgs::msg::WrenchStamped;
 using rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface;
+using std_msgs::msg::Float64;
 using std_msgs::msg::Float64MultiArray;
 
 using Quaternion  = Eigen::Quaterniond;
@@ -191,6 +195,12 @@ CartesianAdaptiveComplianceController::on_configure(
     _dxtilde_pub = get_node()->create_publisher<Float64MultiArray>(
             "/log/dxtilde", rclcpp::QoS(10).transient_local()
     );
+    _ee_vel_pub = get_node()->create_publisher<Twist>(
+            "/ee_velocity", rclcpp::QoS(10).transient_local()
+    );
+    _wrench_pub = get_node()->create_publisher<WrenchStamped>(
+            "/transformed_wrench", rclcpp::QoS(10).transient_local()
+    );
     _q.resize(Base::m_joint_state_pos_handles.size());
     _qd.resize(Base::m_joint_state_pos_handles.size());
     _des_vel_link    = "world";
@@ -211,6 +221,14 @@ CartesianAdaptiveComplianceController::on_activate(
         return parent_ret;
     }
 
+    _auto_fact_sub = get_node()->create_subscription<Float64>(
+            "/dmp/automation_factor",
+            10,
+            [this](const Float64::SharedPtr msg) {
+                this->_automation_factor = msg->data;
+            }
+    );
+
     // Create subscription for desired velocity
     _des_vel   = decltype(_des_vel)::Zero();
     _twist_sub = get_node()->create_subscription<TwistStamped>(
@@ -230,12 +248,11 @@ CartesianAdaptiveComplianceController::on_activate(
                 this->_onDesiredWrenchReceived(msg);
             }
     );
-    _meas_wrench = decltype(_meas_wrench)::Zero();
+    _meas_wrench       = decltype(_meas_wrench)::Zero();
     _sensed_wrench_sub = get_node()->create_subscription<WrenchStamped>(
-            "/sensed_wrench", 10,
-            [this](const WrenchStamped::SharedPtr msg) {
-                _onSensedWrenchReceived(msg);
-            }
+            "/sensed_wrench",
+            10,
+            [this](const WrenchStamped::SharedPtr msg) { _onSensedWrenchReceived(msg); }
     );
 
     // Configure velocity state interface
@@ -379,18 +396,13 @@ void CartesianAdaptiveComplianceController::_onSensedWrenchReceived(
 
 Vector6d CartesianAdaptiveComplianceController::_compute_compliance_error() {
     const Vector6d force_error = ForceBase::computeForceError();
-    const Vector6d motion_error = Base::displayInBaseLink(m_stiffness, m_compliance_ref_link)
-                                 * MotionBase::computeMotionError();
-    const Vector6d damping_error = Base::displayInBaseLink(_D, m_compliance_ref_link)
-                                   * _ee_vel;
+    const Vector6d motion_error
+            = Base::displayInBaseLink(m_stiffness, m_compliance_ref_link)
+              * MotionBase::computeMotionError();
+    const Vector6d damping_error
+            = Base::displayInBaseLink(_D, m_compliance_ref_link) * _ee_vel;
 
-    const Vector6d net_force = motion_error + force_error - damping_error;
-
-    // static int i = 0;
-    // if(i % 10000) {
-    //     std::cout << motion_error.transpose() << std::endl;
-    // }
-    // i++;
+    const Vector6d net_force = motion_error + force_error + damping_error;
     return net_force;
 }
 
@@ -450,6 +462,8 @@ void CartesianAdaptiveComplianceController::_initialize_variables() {
     }
     _Q = Vector6d(Q_weights.data()).asDiagonal();
     _R = Vector6d(R_weights.data()).asDiagonal();
+    std::cout << "Q: \n" << _Q << std::endl;
+    std::cout << "R: \n" << _R << std::endl;
 
     auto F_min = get_node()->get_parameter("Qp.F_min").as_double_array();
     auto F_max = get_node()->get_parameter("Qp.F_max").as_double_array();
@@ -509,6 +523,7 @@ bool CartesianAdaptiveComplianceController::_update_stiffness() {
     const SE3& compliance_frame = _pin_data.oMf[_compliance_link_id];
 
     const SE3 world_to_compliance = compliance_frame.inverse();
+    const SE3 compliance_to_base = base_frame * compliance_frame.inverse();
 
     // Get the current and desired position and orientation (in world frame)
     const Vector3d   target_pos_base = get_position(MotionBase::m_target_frame);
@@ -520,7 +535,8 @@ bool CartesianAdaptiveComplianceController::_update_stiffness() {
 
     // Cartesian error (in world frame)
     const Vector3d pos_err = target_pos - curr_pos;
-    const Vector3d ori_err = quat_logarithmic_map(curr_ori * target_ori.conjugate());
+    // const Vector3d ori_err = quat_logarithmic_map(curr_ori * target_ori.conjugate());
+    const Vector3d ori_err = quat_logarithmic_map(target_ori * curr_ori.conjugate());
 
     // Transform the error to the compliance frame
     const Vector6d x_tilde
@@ -545,14 +561,17 @@ bool CartesianAdaptiveComplianceController::_update_stiffness() {
     }
 
     // Cartesian velocity error (in compliance frame)
-    const Vector6d xd_tilde = rotate_6d_vec(
+    Vector6d xd_tilde = rotate_6d_vec(
             world_to_compliance.rotation(), des_vel_world - ee_vel_world
     );
+    // Vector6d xd_tilde = rotate_6d_vec(world_to_compliance.rotation(), -ee_vel_world);
 
     // Project desired wrench to compliance frame
     const auto des_wrench_frame = get_frame(_pin_model, _pin_data, _des_wrench_link);
     const Vector6d des_wrench_world = rotate_6d_vec(des_wrench_frame, _des_wrench);
-    const Vector6d des_wrench
+    _ee_vel = rotate_6d_vec(compliance_to_base, xd_tilde);
+
+    Vector6d des_wrench
             = rotate_6d_vec(world_to_compliance.rotation(), des_wrench_world);
     if (!des_wrench_frame.has_value()) {
         RCLCPP_WARN_THROTTLE(
@@ -563,6 +582,7 @@ bool CartesianAdaptiveComplianceController::_update_stiffness() {
                 _des_wrench_link.c_str()
         );
     }
+    des_wrench = 0.0 * des_wrench;
 
     const Matrix6d X_tilde  = x_tilde.asDiagonal();  // pos tracking error diag matrix
     const Matrix6d Xd_tilde = xd_tilde.asDiagonal();
@@ -586,9 +606,19 @@ bool CartesianAdaptiveComplianceController::_update_stiffness() {
     const double k3 = k_tmp3 - 0.2;
 
 
+    // _automation_factor = 1;
+    // Vector6d Kdes = _Kmin + 0.6*_automation_factor * (_Kmax - _Kmin);
+    Vector6d Kdes
+            = _Kmin
+              + _automation_factor * (Vector6d({600, 600, 600, 30, 30, 30}) - _Kmin);
+
+    const Matrix6d Rfull = Vector6d({10.0, 10.0, 1.0, 1.0, 1.0, 1.0}).asDiagonal();
+    const Matrix6d R    = _R + _automation_factor * (Rfull - _R);
+
+
     // Fill the QP problem
-    _qp_H                       = X_tilde.transpose() * _Q * X_tilde + _R;
-    _qp_g                       = X_tilde.transpose() * _Q * f - _R * _Kmin;
+    _qp_H                       = X_tilde.transpose() * _Q * X_tilde + R;
+    _qp_g                       = X_tilde.transpose() * _Q * f - R * Kdes;
     _qp_A.topLeftCorner<6, 6>() = X_tilde;
     _qp_A.row(6)                = A_bot_row;
     _qp_A.row(7)                = A_bot_row;
@@ -597,8 +627,9 @@ bool CartesianAdaptiveComplianceController::_update_stiffness() {
     _qp_x_ub                    = _Kmax;
     _qp_A_lb.topRows<6>()       = _F_min - d;
     _qp_A_ub.topRows<6>()       = _F_max - d;
-    _qp_A_lb.bottomRows<3>()    = Vector3d({-1e9, -1e9, k3});
-    _qp_A_ub.bottomRows<3>()    = Vector3d({k1, k2, 1e9});
+    // _qp_A_lb.bottomRows<3>()    = Vector3d({-1e9, -1e9, k3});
+    _qp_A_lb.bottomRows<3>() = Vector3d({-1e9, -1e9, -1e9});
+    _qp_A_ub.bottomRows<3>() = Vector3d({k1, k2, 1e9});
 
 
     // Solve the QP problem:
@@ -628,18 +659,19 @@ bool CartesianAdaptiveComplianceController::_update_stiffness() {
                     ret
             );
         }
+        _K = _Kmin.asDiagonal();
     } else {
         // Update the stiffness matrix
         _K = _qp_x_sol.asDiagonal();
-        _update_damping();
-        m_stiffness = _K;
     }
+    _update_damping();
+    m_stiffness = _K;
 
     // Integrate energy tank
     const Matrix6d Kmin = _Kmin.asDiagonal();
     Vector6d       w    = -(_K - Kmin) * x_tilde;
     if (T < Tmin) w = Vector6d::Zero();
-    const double dx_tank_1 = sigma / _x_tank * xd_tilde.transpose() * _D * xd_tilde;
+    const double dx_tank_1 = (sigma / _x_tank) * xd_tilde.transpose() * _D * xd_tilde;
     const double dx_tank_2 = -(1 / _x_tank) * w.transpose() * xd_tilde;
     const double dx_tank   = dx_tank_1 + dx_tank_2;
     _x_tank += dx_tank * _dt;
@@ -650,6 +682,14 @@ bool CartesianAdaptiveComplianceController::_update_stiffness() {
     Float64MultiArray damping_msg;
     Float64MultiArray xtilde_msg;
     Float64MultiArray dxtilde_msg;
+
+    Twist ee_vel_msg;
+    ee_vel_msg.linear.x  = ee_vel_world(0);
+    ee_vel_msg.linear.y  = ee_vel_world(1);
+    ee_vel_msg.linear.z  = ee_vel_world(2);
+    ee_vel_msg.angular.x = ee_vel_world(3);
+    ee_vel_msg.angular.y = ee_vel_world(4);
+    ee_vel_msg.angular.z = ee_vel_world(5);
 
     tank_state_msg.data.resize(5);
     stiffness_msg.data.resize(6);
@@ -664,16 +704,28 @@ bool CartesianAdaptiveComplianceController::_update_stiffness() {
         dxtilde_msg.data[i]   = xd_tilde(i);
     }
     tank_state_msg.data[0] = _x_tank;
-    tank_state_msg.data[1] = dx_tank;
+    tank_state_msg.data[1] = dx_tank * _x_tank;
     tank_state_msg.data[2] = _tankEnergy();
     tank_state_msg.data[3] = qp_solve_status == qpOASES::SUCCESSFUL_RETURN;
     tank_state_msg.data[4] = dx_tank_2;
 
+    _ee_vel_pub->publish(ee_vel_msg);
     _tank_state_pub->publish(tank_state_msg);
     _stiffness_pub->publish(stiffness_msg);
     _damping_pub->publish(damping_msg);
     _xtilde_pub->publish(xtilde_msg);
     _dxtilde_pub->publish(dxtilde_msg);
+
+    WrenchStamped wrench_msg;
+    wrench_msg.header.stamp    = get_node()->get_clock()->now();
+    wrench_msg.header.frame_id = _compliance_link_name;
+    wrench_msg.wrench.force.x  = des_wrench(0);
+    wrench_msg.wrench.force.y  = des_wrench(1);
+    wrench_msg.wrench.force.z  = des_wrench(2);
+    wrench_msg.wrench.torque.x = des_wrench(3);
+    wrench_msg.wrench.torque.y = des_wrench(4);
+    wrench_msg.wrench.torque.z = des_wrench(5);
+    _wrench_pub->publish(wrench_msg);
 
     _t += _dt;
     return true;

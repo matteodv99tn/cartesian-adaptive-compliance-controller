@@ -7,8 +7,13 @@
 #include <memory>
 #include <vector>
 
+#include <geometry_msgs/msg/detail/twist__struct.hpp>
+#include <geometry_msgs/msg/detail/wrench__struct.hpp>
+#include <std_msgs/msg/detail/float64__struct.hpp>
+
 #include "cartesian_compliance_controller/cartesian_compliance_controller.h"
 #include "cartesian_controller_base/Utility.h"
+#include "geometry_msgs/msg/twist.hpp"
 #include "geometry_msgs/msg/twist_stamped.hpp"
 #include "geometry_msgs/msg/wrench_stamped.hpp"
 #include "hardware_interface/loaned_state_interface.hpp"
@@ -18,6 +23,7 @@
 #include "qpOASES/QProblem.hpp"
 #include "rclcpp/time.hpp"
 #include "rclcpp_lifecycle/node_interfaces/lifecycle_node_interface.hpp"
+#include "std_msgs/msg/float64.hpp"
 #include "std_msgs/msg/float64_multi_array.hpp"
 
 namespace cartesian_adaptive_compliance_controller {
@@ -153,6 +159,8 @@ private:
 
     double inline _tankEnergy() const { return 0.5 * _x_tank * _x_tank; };
 
+    double                                                  _automation_factor;
+    rclcpp::Subscription<std_msgs::msg::Float64>::SharedPtr _auto_fact_sub;
     rclcpp::Subscription<geometry_msgs::msg::TwistStamped>::SharedPtr  _twist_sub;
     rclcpp::Subscription<geometry_msgs::msg::WrenchStamped>::SharedPtr _wrench_sub;
     rclcpp::Subscription<geometry_msgs::msg::WrenchStamped>::SharedPtr
@@ -172,11 +180,13 @@ private:
 
     ctrl::Vector6D _ee_vel;  // end-effector velocity
 
-    rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr _tank_state_pub;
-    rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr _stiffness_pub;
-    rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr _damping_pub;
-    rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr _xtilde_pub;
-    rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr _dxtilde_pub;
+    rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr  _tank_state_pub;
+    rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr  _stiffness_pub;
+    rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr  _damping_pub;
+    rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr  _xtilde_pub;
+    rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr  _dxtilde_pub;
+    rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr         _ee_vel_pub;
+    rclcpp::Publisher<geometry_msgs::msg::WrenchStamped>::SharedPtr _wrench_pub;
 };
 
 }  // namespace cartesian_adaptive_compliance_controller
